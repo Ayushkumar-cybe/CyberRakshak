@@ -1,0 +1,16 @@
+# Web Framework
+fastapi
+uvicorn[standard]
+
+# Task Queue
+celery
+eventlet
+amqp     # RabbitMQ transport
+
+# Database (as per your plan)
+sqlmodel    # Combines SQLAlchemy and Pydantic
+psycopg2-binary # Postgres driver
+
+# Utilities
+python-dotenv  # To read .env files
+pydantic-settings # For managing config

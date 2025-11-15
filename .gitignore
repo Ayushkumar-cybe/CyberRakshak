@@ -205,3 +205,13 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Scan tool output directory
+outputs/
+
+# Ignore Virtual Machine files
+*.vdi
+*.vbox
+
+# Ignore the entire VM folder by name
+"docker Start/"
