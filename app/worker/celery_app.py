@@ -12,7 +12,7 @@ celery_app = Celery(
 # Enable broker heartbeats to keep the connection alive
 # during long-running scans. A value of 60 sends a
 # heartbeat every 60 seconds.
-celery_app.conf.broker_heartbeat = 180
+celery_app.conf.broker_heartbeat = 60
 # --- END FIX ---
 
 celery_app.conf.update(

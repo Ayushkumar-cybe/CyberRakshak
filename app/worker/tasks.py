@@ -24,24 +24,24 @@ HOST_OUTPUTS_DIR = os.path.join(HOST_PROJECT_PATH, "outputs")
 
 @celery_app.task(bind=True)
 def run_scan_task(self, job_id: str, scanners: List[str]):
-    """
-    Main Celery task:
-    Runs the requested scanners (nmap, nuclei, nikto) using DOCKER
-    and saves their output file paths to the database.
-    """
     print(f"Task received for job_id: {job_id} with scanners: {scanners}")
-    
+
     with Session(engine) as session:
-        job = None
         output_paths: Dict[str, str] = {} 
 
         try:
-            # 1. Get Job and set to RUNNING
+            # 1. Get Job
             job_uuid = uuid.UUID(job_id)
             job = session.get(Job, job_uuid)
             if not job:
                 print(f"Error: Job {job_id} not found.")
                 return
+
+            # --- IDEMPOTENCY CHECK (THE FIX) ---
+            if job.status == JobStatus.COMPLETED:
+                print(f"Job {job_id} is already COMPLETED. Skipping execution.")
+                return {"status": "Skipped", "reason": "Already Completed"}
+            # -----------------------------------
 
             job.status = JobStatus.RUNNING
             session.add(job)
@@ -112,7 +112,7 @@ def run_scan_task(self, job_id: str, scanners: List[str]):
 
                 nikto_command = [
                     "docker", "run", "--rm",
-                    "--user", str(os.getuid()),
+                    "--user", "root",
                     "-v", f"{host_job_output_dir}:/output",
                     "ghcr.io/sullo/nikto:latest",
                     "-h", job.target,
