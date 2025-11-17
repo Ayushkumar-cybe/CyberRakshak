@@ -10,38 +10,44 @@ from app.database import engine
 from app.models import Job, JobStatus
 from typing import List, Dict, Any, Optional
 
-# This is the path INSIDE the container (e.g., /app/outputs)
+# --- NEW: Import the parsing functions ---
+from app.parsers import parse_nmap, parse_nuclei, parse_nikto
+# ----------------------------------------
+
+# Path inside container
 INTERNAL_OUTPUTS_DIR = os.path.abspath("outputs")
 os.makedirs(INTERNAL_OUTPUTS_DIR, exist_ok=True)
 
-# --- THIS IS THE FIX ---
-# This is the path ON THE HOST VM (e.g., /home/tanishaq/CyberRakshak)
-# It's read from the docker-compose environment
+# Path on host (for Docker -v)
 HOST_PROJECT_PATH = os.environ.get("HOST_PROJECT_PATH", os.path.abspath("."))
 HOST_OUTPUTS_DIR = os.path.join(HOST_PROJECT_PATH, "outputs")
-# --- END FIX ---
 
 
 @celery_app.task(bind=True)
 def run_scan_task(self, job_id: str, scanners: List[str]):
+    """
+    Main Celery task:
+    Runs scanners, saves raw output, and generates a normalized report.
+    """
     print(f"Task received for job_id: {job_id} with scanners: {scanners}")
-
+    
     with Session(engine) as session:
+        job = None
         output_paths: Dict[str, str] = {} 
+        normalized_data = {"ports": [], "vulnerabilities": []}
+        vulnerabilities = []
 
         try:
-            # 1. Get Job
+            # 1. Get Job and check for idempotency
             job_uuid = uuid.UUID(job_id)
             job = session.get(Job, job_uuid)
             if not job:
                 print(f"Error: Job {job_id} not found.")
                 return
 
-            # --- IDEMPOTENCY CHECK (THE FIX) ---
             if job.status == JobStatus.COMPLETED:
                 print(f"Job {job_id} is already COMPLETED. Skipping execution.")
                 return {"status": "Skipped", "reason": "Already Completed"}
-            # -----------------------------------
 
             job.status = JobStatus.RUNNING
             session.add(job)
@@ -49,20 +55,12 @@ def run_scan_task(self, job_id: str, scanners: List[str]):
             session.refresh(job)
             print(f"Job {job_id} marked as RUNNING for target: {job.target}")
 
-            # --- PATH FIX ---
-            # Path on the HOST VM for the docker -v flag
-            # e.g., /home/tanishaq/CyberRakshak/outputs/JOB_ID
+            # Define Paths
             host_job_output_dir = os.path.join(HOST_OUTPUTS_DIR, job_id)
-            
-            # Path INSIDE this container for saving to the DB
-            # e.g., /app/outputs/JOB_ID
             internal_job_output_dir = os.path.join(INTERNAL_OUTPUTS_DIR, job_id)
-            # We only need to create the *internal* directory
             os.makedirs(internal_job_output_dir, exist_ok=True)
-            # --- END FIX ---
 
-
-            # --- 2. CONDITIONAL DOCKER-BASED SCANNING ---
+            # --- 2. CONDITIONAL DOCKER-BASED SCANNING (Execution) ---
             
             if "nmap" in scanners:
                 print(f"Starting Nmap (Docker) for {job.target}...")
@@ -71,14 +69,9 @@ def run_scan_task(self, job_id: str, scanners: List[str]):
                 
                 nmap_command = [
                     "docker", "run", "--rm",
-                    # --- THIS IS THE FIX ---
-                    # Use the *host* path for the -v flag
                     "-v", f"{host_job_output_dir}:/output",
-                    # --- END FIX ---
                     "instrumentisto/nmap",
-                    "-sV", "-T4", 
-                    "-oX", nmap_output_in_container,
-                    job.target
+                    "-sV", "-T4", "-oX", nmap_output_in_container, job.target
                 ]
                 subprocess.run(nmap_command, check=True, capture_output=True, text=True)
                 output_paths["nmap"] = nmap_file_on_host
@@ -91,15 +84,11 @@ def run_scan_task(self, job_id: str, scanners: List[str]):
                 
                 nuclei_command = [
                     "docker", "run", "--rm",
-                    # --- THIS IS THE FIX ---
-                    # Use the *host* path for the -v flag
                     "-v", f"{host_job_output_dir}:/output",
-                    # --- END FIX ---
                     "projectdiscovery/nuclei",
                     "-target", job.target,
                     "-tags", "cve", 
-                    "-jsonl",
-                    "-o", nuclei_output_in_container
+                    "-jsonl", "-o", nuclei_output_in_container
                 ]
                 subprocess.run(nuclei_command, check=True, capture_output=True, text=True)
                 output_paths["nuclei"] = nuclei_file_on_host
@@ -124,18 +113,37 @@ def run_scan_task(self, job_id: str, scanners: List[str]):
                 output_paths["nikto"] = nikto_file_on_host
                 print("Nikto scan complete.")
             
-            # 3. --- SKIPPING NORMALIZATION (for now) ---
-            print("All requested scans complete.")
+            print("All requested scans complete. Starting normalization...")
+
+
+            # --- 3. NORMALIZATION (Week 2 Goal) ---
+
+            # A. Parse Nmap for ports
+            if "nmap" in output_paths:
+                nmap_results = parse_nmap(output_paths["nmap"])
+                normalized_data["host_info"] = nmap_results["host_info"]
+                normalized_data["ports"].extend(nmap_results["open_ports"])
+
+            # B. Parse Nuclei for vulnerabilities
+            if "nuclei" in output_paths:
+                vulnerabilities.extend(parse_nuclei(output_paths["nuclei"]))
+
+            # C. Parse Nikto for vulnerabilities
+            if "nikto" in output_paths:
+                vulnerabilities.extend(parse_nikto(output_paths["nikto"]))
+                
+            normalized_data["vulnerabilities"] = vulnerabilities
 
             # 4. --- SAVE AND COMPLETE ---
             job.status = JobStatus.COMPLETED
             job.output_files = output_paths
+            job.normalized_report = normalized_data # <-- SAVE THE FINAL REPORT HERE
             
             session.add(job)
             session.commit()
-            print(f"Job {job_id} marked as COMPLETED and output files saved.")
+            print(f"Job {job_id} marked as COMPLETED. Normalized data saved to DB.")
             
-            return {"status": "Completed", "target": job.target, "files": output_paths}
+            return {"status": "Completed", "target": job.target, "files": output_paths, "report_id": str(job.id)}
 
         except subprocess.CalledProcessError as e:
             print(f"Scan failed for job {job_id}.")
