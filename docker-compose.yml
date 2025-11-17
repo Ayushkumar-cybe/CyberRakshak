@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: sih-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: mysecretpassword
+      POSTGRES_DB: sih_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: sih-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    restart: always
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: sih-celery-worker
+    environment:
+      DOCKER_ENV: "true" 
+      DATABASE_URL: "postgresql://postgres:mysecretpassword@postgres:5432/sih_db"
+      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672//"
+      # --- THIS IS THE FIX ---
+      # This variable tells the container its "real" path on the host VM
+      HOST_PROJECT_PATH: "${PWD}" 
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./outputs:/app/outputs
+    depends_on:
+      - postgres
+      - rabbitmq
+    restart: always
+
+volumes:
+  postgres_data:

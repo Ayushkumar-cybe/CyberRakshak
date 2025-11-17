@@ -3,40 +3,50 @@ import uuid
 import subprocess
 import os
 import json
-import xml.etree.ElementTree as ET # We'll need this for Week 2
+import xml.etree.ElementTree as ET 
 from sqlmodel import Session, select
 from app.worker.celery_app import celery_app
 from app.database import engine
 from app.models import Job, JobStatus
 from typing import List, Dict, Any, Optional
+from app.parsers import parse_nmap, parse_nuclei, parse_nikto
+from app.enrichment import get_cisa_kev_data, enrich_vulnerability
 
-# This path is now your local path, e.g., F:\SIH234 (final)\outputs
-OUTPUTS_DIR = os.path.abspath("outputs")
-# Ensure the base output directory exists
-os.makedirs(OUTPUTS_DIR, exist_ok=True)
+
+# Path inside container
+INTERNAL_OUTPUTS_DIR = os.path.abspath("outputs")
+os.makedirs(INTERNAL_OUTPUTS_DIR, exist_ok=True)
+
+# Path on host (for Docker -v)
+HOST_PROJECT_PATH = os.environ.get("HOST_PROJECT_PATH", os.path.abspath("."))
+HOST_OUTPUTS_DIR = os.path.join(HOST_PROJECT_PATH, "outputs")
 
 
 @celery_app.task(bind=True)
 def run_scan_task(self, job_id: str, scanners: List[str]):
     """
     Main Celery task:
-    Runs the requested scanners (nmap, nuclei, nikto) using DOCKER
-    and saves their output file paths to the database.
+    Runs scanners, saves raw output, and generates a normalized report.
     """
     print(f"Task received for job_id: {job_id} with scanners: {scanners}")
     
     with Session(engine) as session:
         job = None
-        # This dict will store our results
         output_paths: Dict[str, str] = {} 
+        normalized_data = {"ports": [], "vulnerabilities": []}
+        vulnerabilities = []
 
         try:
-            # 1. Get Job and set to RUNNING
+            # 1. Get Job and check for idempotency
             job_uuid = uuid.UUID(job_id)
             job = session.get(Job, job_uuid)
             if not job:
                 print(f"Error: Job {job_id} not found.")
                 return
+
+            if job.status == JobStatus.COMPLETED:
+                print(f"Job {job_id} is already COMPLETED. Skipping execution.")
+                return {"status": "Skipped", "reason": "Already Completed"}
 
             job.status = JobStatus.RUNNING
             session.add(job)
@@ -44,30 +54,23 @@ def run_scan_task(self, job_id: str, scanners: List[str]):
             session.refresh(job)
             print(f"Job {job_id} marked as RUNNING for target: {job.target}")
 
-            # Create the unique output directory for this job
-            # This path MUST be absolute for Docker volumes to work
-            job_output_dir = os.path.join(OUTPUTS_DIR, job_id)
-            os.makedirs(job_output_dir, exist_ok=True)
+            # Define Paths
+            host_job_output_dir = os.path.join(HOST_OUTPUTS_DIR, job_id)
+            internal_job_output_dir = os.path.join(INTERNAL_OUTPUTS_DIR, job_id)
+            os.makedirs(internal_job_output_dir, exist_ok=True)
 
-            # --- 2. CONDITIONAL DOCKER-BASED SCANNING ---
+            # --- 2. CONDITIONAL DOCKER-BASED SCANNING (Execution) ---
             
             if "nmap" in scanners:
                 print(f"Starting Nmap (Docker) for {job.target}...")
-                # The output file path *inside the container*
                 nmap_output_in_container = "/output/nmap.xml"
-                # The final file path *on the host* (for the DB)
-                nmap_file_on_host = os.path.join(job_output_dir, "nmap.xml")
+                nmap_file_on_host = os.path.join(internal_job_output_dir, "nmap.xml")
                 
                 nmap_command = [
                     "docker", "run", "--rm",
-                    # Mount the host's job_output_dir to /output inside the container
-                    # e.g., -v "F:\SIH234 (final)\outputs\job_id":/output
-                    "-v", f"{job_output_dir}:/output",
-                    # Popular, well-maintained Nmap Docker image
+                    "-v", f"{host_job_output_dir}:/output",
                     "instrumentisto/nmap",
-                    "-sV", "-T4", 
-                    "-oX", nmap_output_in_container,  # Save to mounted dir
-                    job.target
+                    "-sV", "-T4", "-oX", nmap_output_in_container, job.target
                 ]
                 subprocess.run(nmap_command, check=True, capture_output=True, text=True)
                 output_paths["nmap"] = nmap_file_on_host
@@ -76,17 +79,15 @@ def run_scan_task(self, job_id: str, scanners: List[str]):
             if "nuclei" in scanners:
                 print(f"Starting Nuclei (Docker) for {job.target}...")
                 nuclei_output_in_container = "/output/nuclei.jsonl"
-                nuclei_file_on_host = os.path.join(job_output_dir, "nuclei.jsonl")
+                nuclei_file_on_host = os.path.join(internal_job_output_dir, "nuclei.jsonl")
                 
                 nuclei_command = [
                     "docker", "run", "--rm",
-                    "-v", f"{job_output_dir}:/output",
-                    # Official Nuclei image
+                    "-v", f"{host_job_output_dir}:/output",
                     "projectdiscovery/nuclei",
                     "-target", job.target,
-                    "-jsonl", 
-                    "-o", nuclei_output_in_container, # Save to mounted dir
-                    "-duc"
+                    "-tags", "cve", 
+                    "-jsonl", "-o", nuclei_output_in_container
                 ]
                 subprocess.run(nuclei_command, check=True, capture_output=True, text=True)
                 output_paths["nuclei"] = nuclei_file_on_host
@@ -94,36 +95,72 @@ def run_scan_task(self, job_id: str, scanners: List[str]):
             
             if "nikto" in scanners:
                 print(f"Starting Nikto (Docker) for {job.target}...")
-                # This will fix your C:\tools\nikto.bat issue
                 nikto_output_in_container = "/output/nikto.json"
-                nikto_file_on_host = os.path.join(job_output_dir, "nikto.json")
+                nikto_file_on_host = os.path.join(internal_job_output_dir, "nikto.json")
 
                 nikto_command = [
                     "docker", "run", "--rm",
-                    "-v", f"{job_output_dir}:/output",
-                    # Popular Nikto image
-                    "sullo/nikto",
+                    "--user", "root",
+                    "-v", f"{host_job_output_dir}:/output",
+                    "ghcr.io/sullo/nikto:latest",
                     "-h", job.target,
                     "-Format", "json",
-                    "-o", nikto_output_in_container, # Save to mounted dir
+                    "-o", nikto_output_in_container,
                     "-Tuning", "4"
                 ]
                 subprocess.run(nikto_command, check=True, capture_output=True, text=True)
                 output_paths["nikto"] = nikto_file_on_host
                 print("Nikto scan complete.")
             
-            # 3. --- SKIPPING NORMALIZATION (for now) ---
-            print("All requested scans complete.")
+            print("All requested scans complete. Starting normalization...")
+
+
+            # --- 3. NORMALIZATION (Week 2 Goal) ---
+
+            # A. Parse Nmap for ports
+            if "nmap" in output_paths:
+                nmap_results = parse_nmap(output_paths["nmap"])
+                normalized_data["host_info"] = nmap_results["host_info"]
+                normalized_data["ports"].extend(nmap_results["open_ports"])
+
+            # B. Parse Nuclei for vulnerabilities
+            if "nuclei" in output_paths:
+                vulnerabilities.extend(parse_nuclei(output_paths["nuclei"]))
+
+            # C. Parse Nikto for vulnerabilities
+            if "nikto" in output_paths:
+                vulnerabilities.extend(parse_nikto(output_paths["nikto"]))
+            
+
+
+            # --- ENRICHMENT STEP (NEW) ---
+            print("Starting enrichment...")
+
+            # 1. Fetch Threat Intel (CISA KEV)
+            # In a production app, you would cache this in Redis so you don't
+            # download it for every single scan. For now, this is fine.
+            cisa_cache = get_cisa_kev_data()
+
+            # 2. Loop through vulnerabilities and enrich them
+            enriched_vulnerabilities = []
+            for vuln in vulnerabilities:
+                # Apply enrichment
+                enriched_vuln = enrich_vulnerability(vuln, cisa_cache)
+                enriched_vulnerabilities.append(enriched_vuln)
+
+
+            normalized_data["vulnerabilities"] = vulnerabilities
 
             # 4. --- SAVE AND COMPLETE ---
             job.status = JobStatus.COMPLETED
-            job.output_files = output_paths  # <-- Save the dict of file paths
+            job.output_files = output_paths
+            job.normalized_report = normalized_data # <-- SAVE THE FINAL REPORT HERE
             
             session.add(job)
             session.commit()
-            print(f"Job {job_id} marked as COMPLETED and output files saved.")
+            print(f"Job {job_id} marked as COMPLETED. Normalized data saved to DB.")
             
-            return {"status": "Completed", "target": job.target, "files": output_paths}
+            return {"status": "Completed", "target": job.target, "files": output_paths, "report_id": str(job.id)}
 
         except subprocess.CalledProcessError as e:
             print(f"Scan failed for job {job_id}.")
@@ -132,12 +169,11 @@ def run_scan_task(self, job_id: str, scanners: List[str]):
             print(f"STDERR: {e.stderr}")
             if job:
                 job.status = JobStatus.FAILED
-                job.output_files = output_paths # Save partial results
+                job.output_files = output_paths
                 session.add(job)
                 session.commit()
             raise
         except Exception as e:
-            # Handle other failures (e.g., database)
             print(f"Task for job {job_id} failed with general error: {e}")
             if job:
                 job.status = JobStatus.FAILED
