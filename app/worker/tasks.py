@@ -9,10 +9,9 @@ from app.worker.celery_app import celery_app
 from app.database import engine
 from app.models import Job, JobStatus
 from typing import List, Dict, Any, Optional
-
-# --- NEW: Import the parsing functions ---
 from app.parsers import parse_nmap, parse_nuclei, parse_nikto
-# ----------------------------------------
+from app.enrichment import get_cisa_kev_data, enrich_vulnerability
+
 
 # Path inside container
 INTERNAL_OUTPUTS_DIR = os.path.abspath("outputs")
@@ -131,7 +130,25 @@ def run_scan_task(self, job_id: str, scanners: List[str]):
             # C. Parse Nikto for vulnerabilities
             if "nikto" in output_paths:
                 vulnerabilities.extend(parse_nikto(output_paths["nikto"]))
-                
+            
+
+
+            # --- ENRICHMENT STEP (NEW) ---
+            print("Starting enrichment...")
+
+            # 1. Fetch Threat Intel (CISA KEV)
+            # In a production app, you would cache this in Redis so you don't
+            # download it for every single scan. For now, this is fine.
+            cisa_cache = get_cisa_kev_data()
+
+            # 2. Loop through vulnerabilities and enrich them
+            enriched_vulnerabilities = []
+            for vuln in vulnerabilities:
+                # Apply enrichment
+                enriched_vuln = enrich_vulnerability(vuln, cisa_cache)
+                enriched_vulnerabilities.append(enriched_vuln)
+
+
             normalized_data["vulnerabilities"] = vulnerabilities
 
             # 4. --- SAVE AND COMPLETE ---
