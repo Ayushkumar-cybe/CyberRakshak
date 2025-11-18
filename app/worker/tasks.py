@@ -12,7 +12,6 @@ from typing import List, Dict, Any, Optional
 from app.parsers import parse_nmap, parse_nuclei, parse_nikto, parse_zap, parse_wappalyzer
 from app.enrichment import get_cisa_kev_data, enrich_vulnerability
 
-
 # Path inside container
 INTERNAL_OUTPUTS_DIR = os.path.abspath("outputs")
 os.makedirs(INTERNAL_OUTPUTS_DIR, exist_ok=True)
@@ -24,10 +23,6 @@ HOST_OUTPUTS_DIR = os.path.join(HOST_PROJECT_PATH, "outputs")
 
 @celery_app.task(bind=True)
 def run_scan_task(self, job_id: str, scanners: List[str]):
-    """
-    Main Celery task:
-    Runs scanners, saves raw output, and generates a normalized report.
-    """
     print(f"Task received for job_id: {job_id} with scanners: {scanners}")
     
     with Session(engine) as session:
@@ -37,7 +32,6 @@ def run_scan_task(self, job_id: str, scanners: List[str]):
         vulnerabilities = []
 
         try:
-            # 1. Get Job and check for idempotency
             job_uuid = uuid.UUID(job_id)
             job = session.get(Job, job_uuid)
             if not job:
@@ -54,13 +48,14 @@ def run_scan_task(self, job_id: str, scanners: List[str]):
             session.refresh(job)
             print(f"Job {job_id} marked as RUNNING for target: {job.target}")
 
-            # Define Paths
             host_job_output_dir = os.path.join(HOST_OUTPUTS_DIR, job_id)
             internal_job_output_dir = os.path.join(INTERNAL_OUTPUTS_DIR, job_id)
             os.makedirs(internal_job_output_dir, exist_ok=True)
 
-            # --- 2. CONDITIONAL DOCKER-BASED SCANNING (Execution) ---
-            
+            target_url = job.target
+            if not target_url.startswith("http"):
+                target_url = f"http://{job.target}"
+
             if "nmap" in scanners:
                 print(f"Starting Nmap (Docker) for {job.target}...")
                 nmap_output_in_container = "/output/nmap.xml"
@@ -115,120 +110,75 @@ def run_scan_task(self, job_id: str, scanners: List[str]):
             if "zap" in scanners:
                 print(f"Starting OWASP ZAP (Docker) for {job.target}...")
                 zap_output_filename = "zap.json"
-                # ZAP writes to /zap/wrk/ inside its container
                 zap_file_on_host = os.path.join(internal_job_output_dir, zap_output_filename)
-
-                # Ensure target has protocol
-                target_url = job.target
-                if not target_url.startswith("http"):
-                    target_url = f"http://{job.target}"
 
                 zap_command = [
                     "docker", "run", "--rm",
-                    # Fix permissions for the mounted volume
                     "--user", "root",
-                    # Mount the job output dir to ZAP's work dir
                     "-v", f"{host_job_output_dir}:/zap/wrk/:rw",
                     "ghcr.io/zaproxy/zaproxy:stable",
                     "zap-baseline.py",
                     "-t", target_url,
                     "-J", zap_output_filename
                 ]
+                subprocess.run(zap_command, check=False, capture_output=True, text=True)
+                output_paths["zap"] = zap_file_on_host
+                print("ZAP scan complete.")
+
+            if "wappalyzer" in scanners:
+                print(f"Starting Wappalyzer (Docker) for {job.target}...")
+                wappalyzer_file = os.path.join(internal_job_output_dir, "wappalyzer.json")
+
+                # Use the local image we built
+                wappalyzer_command = [
+                    "docker", "run", "--rm",
+                    "local/wappalyzer",
+                    target_url
+                ]
                 
-                # ZAP returns 0=Clean, 1=Fail, 2=Warn. We accept all of them.
-                # check=False prevents crash on findings
-                process = subprocess.run(zap_command, check=False, capture_output=True, text=True)
+                result = subprocess.run(wappalyzer_command, check=False, capture_output=True, text=True)
                 
-                # Only fail if it's a Docker error (exit code > 2 usually)
-                if process.returncode > 2:
-                     print(f"ZAP failed: {process.stderr}")
-                     # We don't raise error here, just skip ZAP results to keep partial data
-                else:
-                     output_paths["zap"] = zap_file_on_host
-                     print("ZAP scan complete.")
-            
-
-	    if "wappalyzer" in scanners:
-            	print(f"Starting Wappalyzer (Docker) for {job.target}...")
-            	wappalyzer_file = os.path.join(internal_job_output_dir, "wappalyzer.json")
-
-            	# Ensure target has protocol
-            	target_url = job.target
-            	if not target_url.startswith("http"):
-                	target_url = f"http://{job.target}"
-
-            	wappalyzer_command = [
-                	"docker", "run", "--rm",
-                	"wappalyzer/cli",
-                	target_url,
-                	"--json"
-            	]
-
-            	# Wappalyzer prints JSON to stdout, so we capture it
-            	result = subprocess.run(wappalyzer_command, check=False, capture_output=True, text=True)
-
-            	# Save the captured JSON to a file so our parser can read it
-            	try:
-                	# Verify it's valid JSON before saving
-                	json.loads(result.stdout) 
-                	with open(wappalyzer_file, 'w') as f:
-                    	f.write(result.stdout)
-
-                	output_paths["wappalyzer"] = wappalyzer_file
-                	print("Wappalyzer scan complete.")
-            	except json.JSONDecodeError:
-                	print(f"Wappalyzer failed to produce valid JSON. Stderr: {result.stderr}")
-
+                try:
+                    # Wappalyzer outputs JSON to stdout
+                    json.loads(result.stdout)
+                    with open(wappalyzer_file, 'w') as f:
+                        f.write(result.stdout)
+                    output_paths["wappalyzer"] = wappalyzer_file
+                    print("Wappalyzer scan complete.")
+                except json.JSONDecodeError:
+                    print(f"Wappalyzer failed: {result.stderr}")
 
             print("All requested scans complete. Starting normalization...")
 
-
-            # --- 3. NORMALIZATION (Week 2 Goal) ---
-
-            # A. Parse Nmap for ports
             if "nmap" in output_paths:
                 nmap_results = parse_nmap(output_paths["nmap"])
                 normalized_data["host_info"] = nmap_results["host_info"]
                 normalized_data["ports"].extend(nmap_results["open_ports"])
 
-            # B. Parse Nuclei for vulnerabilities
             if "nuclei" in output_paths:
                 vulnerabilities.extend(parse_nuclei(output_paths["nuclei"]))
 
-            # C. Parse Nikto for vulnerabilities
             if "nikto" in output_paths:
                 vulnerabilities.extend(parse_nikto(output_paths["nikto"]))
 
-	    # D. Parse ZAP for vulnerabilities
             if "zap" in output_paths:
                 vulnerabilities.extend(parse_zap(output_paths["zap"]))
 
-	    # E. Parse Wappalyzer
             if "wappalyzer" in output_paths:
                 normalized_data["technologies"] = parse_wappalyzer(output_paths["wappalyzer"])
-
-            # --- ENRICHMENT STEP (NEW) ---
+            
             print("Starting enrichment...")
-
-            # 1. Fetch Threat Intel (CISA KEV)
-            # In a production app, you would cache this in Redis so you don't
-            # download it for every single scan. For now, this is fine.
             cisa_cache = get_cisa_kev_data()
-
-            # 2. Loop through vulnerabilities and enrich them
             enriched_vulnerabilities = []
             for vuln in vulnerabilities:
-                # Apply enrichment
                 enriched_vuln = enrich_vulnerability(vuln, cisa_cache)
                 enriched_vulnerabilities.append(enriched_vuln)
+            
+            normalized_data["vulnerabilities"] = enriched_vulnerabilities
 
-
-            normalized_data["vulnerabilities"] = vulnerabilities
-
-            # 4. --- SAVE AND COMPLETE ---
             job.status = JobStatus.COMPLETED
             job.output_files = output_paths
-            job.normalized_report = normalized_data # <-- SAVE THE FINAL REPORT HERE
+            job.normalized_report = normalized_data
             
             session.add(job)
             session.commit()
