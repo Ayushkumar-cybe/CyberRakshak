@@ -154,3 +154,52 @@ def parse_nikto(file_path: str) -> List[Dict[str, Any]]:
         logger.error(f"Error reading Nikto file {file_path}: {e}")
 
     return vulnerabilities
+
+def parse_zap(file_path: str) -> List[Dict[str, Any]]:
+    """
+    Parses OWASP ZAP JSON output.
+    """
+    vulnerabilities = []
+    try:
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+            # ZAP reports are hierarchical: site -> alerts
+            for site in data.get("site", []):
+                for alert in site.get("alerts", []):
+                    vuln = {
+                        "tool": "zap",
+                        "title": alert.get("name", "Unknown Vulnerability"),
+                        # ZAP uses "High", "Medium", "Low", "Informational"
+                        "severity": alert.get("riskdesc", "Info").split()[0].lower(),
+                        "description": alert.get("desc", ""),
+                        "solution": alert.get("solution", ""),
+                        "url": site.get("@name", "") + alert.get("instances", [{}])[0].get("uri", ""),
+                        "references": alert.get("reference", "").split("\n")
+                    }
+                    vulnerabilities.append(vuln)
+    except Exception as e:
+        logger.error(f"Error reading ZAP file {file_path}: {e}")
+    return vulnerabilities
+
+def parse_wappalyzer(file_path: str) -> List[Dict[str, Any]]:
+    """
+    Parses Wappalyzer JSON output.
+    """
+    technologies = []
+    try:
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+
+            # Wappalyzer structure: {"urls": {"http://target/": {"technologies": [...]}}}
+            for url, info in data.get("urls", {}).items():
+                for tech in info.get("technologies", []):
+                    technologies.append({
+                        "name": tech.get("name"),
+                        "version": tech.get("version"),
+                        "categories": [cat.get("name") for cat in tech.get("categories", [])],
+                        "confidence": tech.get("confidence")
+                    })
+    except Exception as e:
+        logger.error(f"Error reading Wappalyzer file {file_path}: {e}")
+
+    return technologies

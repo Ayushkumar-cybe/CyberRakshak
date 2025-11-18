@@ -9,7 +9,7 @@ from app.worker.celery_app import celery_app
 from app.database import engine
 from app.models import Job, JobStatus
 from typing import List, Dict, Any, Optional
-from app.parsers import parse_nmap, parse_nuclei, parse_nikto
+from app.parsers import parse_nmap, parse_nuclei, parse_nikto, parse_zap, parse_wappalyzer
 from app.enrichment import get_cisa_kev_data, enrich_vulnerability
 
 
@@ -33,7 +33,7 @@ def run_scan_task(self, job_id: str, scanners: List[str]):
     with Session(engine) as session:
         job = None
         output_paths: Dict[str, str] = {} 
-        normalized_data = {"ports": [], "vulnerabilities": []}
+        normalized_data = {"ports": [], "vulnerabilities": [], "technologies": []}
         vulnerabilities = []
 
         try:
@@ -111,7 +111,75 @@ def run_scan_task(self, job_id: str, scanners: List[str]):
                 subprocess.run(nikto_command, check=True, capture_output=True, text=True)
                 output_paths["nikto"] = nikto_file_on_host
                 print("Nikto scan complete.")
+
+            if "zap" in scanners:
+                print(f"Starting OWASP ZAP (Docker) for {job.target}...")
+                zap_output_filename = "zap.json"
+                # ZAP writes to /zap/wrk/ inside its container
+                zap_file_on_host = os.path.join(internal_job_output_dir, zap_output_filename)
+
+                # Ensure target has protocol
+                target_url = job.target
+                if not target_url.startswith("http"):
+                    target_url = f"http://{job.target}"
+
+                zap_command = [
+                    "docker", "run", "--rm",
+                    # Fix permissions for the mounted volume
+                    "--user", "root",
+                    # Mount the job output dir to ZAP's work dir
+                    "-v", f"{host_job_output_dir}:/zap/wrk/:rw",
+                    "ghcr.io/zaproxy/zaproxy:stable",
+                    "zap-baseline.py",
+                    "-t", target_url,
+                    "-J", zap_output_filename
+                ]
+                
+                # ZAP returns 0=Clean, 1=Fail, 2=Warn. We accept all of them.
+                # check=False prevents crash on findings
+                process = subprocess.run(zap_command, check=False, capture_output=True, text=True)
+                
+                # Only fail if it's a Docker error (exit code > 2 usually)
+                if process.returncode > 2:
+                     print(f"ZAP failed: {process.stderr}")
+                     # We don't raise error here, just skip ZAP results to keep partial data
+                else:
+                     output_paths["zap"] = zap_file_on_host
+                     print("ZAP scan complete.")
             
+
+	    if "wappalyzer" in scanners:
+            	print(f"Starting Wappalyzer (Docker) for {job.target}...")
+            	wappalyzer_file = os.path.join(internal_job_output_dir, "wappalyzer.json")
+
+            	# Ensure target has protocol
+            	target_url = job.target
+            	if not target_url.startswith("http"):
+                	target_url = f"http://{job.target}"
+
+            	wappalyzer_command = [
+                	"docker", "run", "--rm",
+                	"wappalyzer/cli",
+                	target_url,
+                	"--json"
+            	]
+
+            	# Wappalyzer prints JSON to stdout, so we capture it
+            	result = subprocess.run(wappalyzer_command, check=False, capture_output=True, text=True)
+
+            	# Save the captured JSON to a file so our parser can read it
+            	try:
+                	# Verify it's valid JSON before saving
+                	json.loads(result.stdout) 
+                	with open(wappalyzer_file, 'w') as f:
+                    	f.write(result.stdout)
+
+                	output_paths["wappalyzer"] = wappalyzer_file
+                	print("Wappalyzer scan complete.")
+            	except json.JSONDecodeError:
+                	print(f"Wappalyzer failed to produce valid JSON. Stderr: {result.stderr}")
+
+
             print("All requested scans complete. Starting normalization...")
 
 
@@ -130,8 +198,14 @@ def run_scan_task(self, job_id: str, scanners: List[str]):
             # C. Parse Nikto for vulnerabilities
             if "nikto" in output_paths:
                 vulnerabilities.extend(parse_nikto(output_paths["nikto"]))
-            
 
+	    # D. Parse ZAP for vulnerabilities
+            if "zap" in output_paths:
+                vulnerabilities.extend(parse_zap(output_paths["zap"]))
+
+	    # E. Parse Wappalyzer
+            if "wappalyzer" in output_paths:
+                normalized_data["technologies"] = parse_wappalyzer(output_paths["wappalyzer"])
 
             # --- ENRICHMENT STEP (NEW) ---
             print("Starting enrichment...")
