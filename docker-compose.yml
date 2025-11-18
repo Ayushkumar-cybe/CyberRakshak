@@ -30,7 +30,6 @@ services:
       timeout: 10s
       retries: 5
 
-  # --- NEW: The API Service ---
   backend:
     build:
       context: .
@@ -39,7 +38,6 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # Internal Docker DNS names
       DATABASE_URL: "postgresql://postgres:mysecretpassword@postgres:5432/sih_db"
       RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672//"
     depends_on:
@@ -48,7 +46,6 @@ services:
       rabbitmq:
         condition: service_healthy
     restart: always
-  # ----------------------------
 
   celery-worker:
     build:
@@ -69,6 +66,19 @@ services:
       rabbitmq:
         condition: service_healthy
     restart: always
+
+  # --- NEW: Wappalyzer Builder ---
+  # This service builds the image 'local/wappalyzer' automatically.
+  # It will start, print a message, and exit successfully.
+  wappalyzer:
+    build:
+      context: .
+      dockerfile: Dockerfile.wappalyzer
+    image: local/wappalyzer
+    container_name: sih-wappalyzer-builder
+    entrypoint: ["echo", "Wappalyzer image built and ready."]
+    restart: "no"
+  # -------------------------------
 
 volumes:
   postgres_data:
