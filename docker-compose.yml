@@ -67,9 +67,6 @@ services:
         condition: service_healthy
     restart: always
 
-  # --- NEW: Wappalyzer Builder ---
-  # This service builds the image 'local/wappalyzer' automatically.
-  # It will start, print a message, and exit successfully.
   wappalyzer:
     build:
       context: .
@@ -78,7 +75,12 @@ services:
     container_name: sih-wappalyzer-builder
     entrypoint: ["echo", "Wappalyzer image built and ready."]
     restart: "no"
-  # -------------------------------
+
+  metasploit:
+    image: metasploitframework/metasploit-framework
+    container_name: sih-metasploit-cache
+    entrypoint: ["echo", "Metasploit image pulled."]
+    restart: "no"
 
 volumes:
   postgres_data:
