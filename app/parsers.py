@@ -1,6 +1,7 @@
 import json
 import xml.etree.ElementTree as ET
 from typing import Dict, Any, List
+import re
 import logging
 
 # Configure logging
@@ -203,3 +204,51 @@ def parse_wappalyzer(file_path: str) -> List[Dict[str, Any]]:
         logger.error(f"Error reading Wappalyzer file {file_path}: {e}")
 
     return technologies
+
+def parse_metasploit(file_path: str) -> List[Dict[str, Any]]:
+    """
+    Parses Metasploit (msfconsole) text output.
+    Extracts information from auxiliary scanner modules, ignoring warnings.
+    """
+    vulnerabilities = []
+    try:
+        with open(file_path, 'r') as f:
+            content = f.read()
+
+        # Debug: Log what we read (optional, good for troubleshooting)
+        # logger.info(f"Parsing Metasploit output: {content[:200]}...")
+
+        for line in content.splitlines():
+            line = line.strip()
+            
+            # Skip empty lines or warnings
+            if not line or "deprecated" in line.lower() or "Gem::" in line:
+                continue
+
+            # Look for lines starting with "[+]" (Success in Metasploit)
+            if line.startswith("[+]"):
+                vuln = {
+                    "tool": "metasploit",
+                    "title": "Metasploit Finding",
+                    "severity": "info", 
+                    "description": line,
+                    "raw_output": line
+                }
+                
+                # Try to make the title more specific
+                if "SSH server version" in line:
+                    vuln["title"] = "SSH Version Detected"
+                elif "Anonymous READ" in line:
+                    vuln["title"] = "Anonymous FTP Access"
+                    vuln["severity"] = "medium"
+                elif "OS:" in line:
+                    vuln["title"] = "OS Detection (SMB)"
+                elif "Apache" in line or "nginx" in line:
+                     vuln["title"] = "Web Server Version Detected"
+
+                vulnerabilities.append(vuln)
+
+    except Exception as e:
+        logger.error(f"Error reading Metasploit file {file_path}: {e}")
+    
+    return vulnerabilities
