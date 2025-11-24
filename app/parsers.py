@@ -252,3 +252,42 @@ def parse_metasploit(file_path: str) -> List[Dict[str, Any]]:
         logger.error(f"Error reading Metasploit file {file_path}: {e}")
     
     return vulnerabilities
+
+def parse_openvas(file_path: str) -> List[Dict[str, Any]]:
+    """
+    Parses OpenVAS XML report.
+    """
+    vulnerabilities = []
+    try:
+        tree = ET.parse(file_path)
+        root = tree.getroot()
+
+        # Iterate over results
+        for result in root.findall(".//result"):
+            name = result.find("name").text
+            description = result.find("description").text
+            severity_score = result.find("severity").text
+
+            # Convert score to label
+            score = float(severity_score)
+            if score >= 9.0: severity = "critical"
+            elif score >= 7.0: severity = "high"
+            elif score >= 4.0: severity = "medium"
+            elif score > 0.0: severity = "low"
+            else: severity = "info"
+
+            vuln = {
+                "tool": "openvas",
+                "title": name,
+                "severity": severity,
+                "description": description,
+                "cvss_score": severity_score,
+                "host": result.find("host").text,
+                "port": result.find("port").text,
+                "nvt_oid": result.find("nvt").get("oid")
+            }
+            vulnerabilities.append(vuln)
+    except Exception as e:
+        logger.error(f"Error reading OpenVAS file {file_path}: {e}")
+
+    return vulnerabilities
