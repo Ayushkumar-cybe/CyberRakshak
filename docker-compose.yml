@@ -67,6 +67,7 @@ services:
         condition: service_healthy
     restart: always
 
+  # Builder for Wappalyzer
   wappalyzer:
     build:
       context: .
@@ -76,6 +77,18 @@ services:
     entrypoint: ["echo", "Wappalyzer image built and ready."]
     restart: "no"
 
+  # --- NEW: Builder for GVM Tools (OpenVAS Automation) ---
+  gvm-tools:
+    build:
+      context: .
+      dockerfile: Dockerfile.gvm-tools
+    image: local/gvm-tools
+    container_name: sih-gvm-tools-builder
+    entrypoint: ["echo", "GVM Tools image built."]
+    restart: "no"
+  # -------------------------------------------------------
+
+  # Builder/Cache for Metasploit
   metasploit:
     image: metasploitframework/metasploit-framework
     container_name: sih-metasploit-cache

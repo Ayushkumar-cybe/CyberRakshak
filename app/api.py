@@ -4,31 +4,68 @@ from sqlmodel import Session, select
 from app.database import get_session
 from app.models import Job, JobStatus
 from app.worker.tasks import run_scan_task
-from app.enrichment import get_cisa_kev_data, enrich_vulnerability
-from pydantic import BaseModel
-from typing import Optional, List, Dict, Any, Union
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict, Any, Union, Literal
 
-# === NEW: Flexible Configuration Models ===
+# === Configuration Models ===
+
+class NmapConfig(BaseModel):
+    ports: Optional[str] = None
+    speed: Literal["T1", "T2", "T3", "T4", "T5"] = "T4"
+    script: Optional[str] = None
+
+class NucleiConfig(BaseModel):
+    tags: str = "cve"
+    severity: Optional[str] = None
+
+class ZapConfig(BaseModel):
+    mode: Literal["baseline", "full"] = "baseline"
+
+class NiktoConfig(BaseModel):
+    tuning: Optional[str] = None
+
+class MetasploitConfig(BaseModel):
+    modules: List[str] = [
+        "auxiliary/scanner/http/http_version",
+        "auxiliary/scanner/http/title",
+        "auxiliary/scanner/ssh/ssh_version"
+    ]
+
+class OpenVASConfig(BaseModel):
+    profile: Literal["Full and fast", "Discovery", "Host Discovery", "System Discovery"] = "Full and fast"
+
+class WappalyzerConfig(BaseModel):
+    enabled: bool = True
 
 class ScannerConfig(BaseModel):
-    """Generic configuration for any scanner"""
+    """Generic configuration wrapper"""
     enabled: bool = True
-    # Allow any extra parameters (e.g., ports, mode, profile)
     params: Optional[Dict[str, Any]] = {}
 
+class ScannerConfigs(BaseModel):
+    """Specific configuration for known scanners"""
+    nmap: Optional[NmapConfig] = NmapConfig()
+    nuclei: Optional[NucleiConfig] = NucleiConfig()
+    zap: Optional[ZapConfig] = ZapConfig()
+    nikto: Optional[NiktoConfig] = NiktoConfig()
+    metasploit: Optional[MetasploitConfig] = MetasploitConfig()
+    openvas: Optional[OpenVASConfig] = OpenVASConfig()
+    wappalyzer: Optional[WappalyzerConfig] = WappalyzerConfig()
+
+# === Request Model (Moved AFTER ScannerConfig) ===
 class ScanStartRequest(BaseModel):
-    """Request model to start a scan."""
     target: str
-    # Scanners can now be a list of strings (old way) OR a config dict (new way)
-    # Example Dict: {"nmap": {"enabled": true, "params": {"ports": "80,443"}}}
+    # Accept List (old way) OR Dict (new way)
     scanners: Optional[Union[List[str], Dict[str, ScannerConfig]]] = None
+    # Optional advanced config object
+    config: Optional[ScannerConfigs] = ScannerConfigs()
 
 # === Response Models ===
 class ScanStartResponse(BaseModel):
     job_id: uuid.UUID
     status: JobStatus
     target: str
-    scanners_requested: List[str] # We still just list the names for simplicity
+    scanners_requested: List[str]
 
 class ScanStatusResponse(BaseModel):
     job_id: uuid.UUID
@@ -38,7 +75,6 @@ class ScanStatusResponse(BaseModel):
     scanners_requested: Optional[List[str]]
     results: Optional[dict] = None
 
-
 router = APIRouter(prefix="/api", tags=["Scans"])
 
 @router.post("/scan/start", response_model=ScanStartResponse)
@@ -46,48 +82,39 @@ def start_scan(
     request: ScanStartRequest, 
     session: Session = Depends(get_session)
 ):
-    """
-    Start a new vulnerability scan.
-    Supports simple list: ["nmap", "zap"]
-    OR detailed config: 
-    {
-      "nmap": {"enabled": true, "params": {"ports": "top-100"}},
-      "zap": {"enabled": true, "params": {"mode": "aggressive"}}
-    }
-    """
-    
-    # Normalize input to a standard dictionary format for the worker
-    # Final format passed to worker: {"nmap": {"ports": "..."}, "zap": {...}}
     worker_config = {}
     
+    # 1. Determine which scanners to run
+    selected_scanners = []
     if not request.scanners:
-        # Default: Run standard suite
-        worker_config = {
-            "nmap": {},
-            "nuclei": {},
-            "nikto": {},
-            "zap": {},
-            "wappalyzer": {},
-            "metasploit": {}
-        }
+        # Default suite
+        selected_scanners = ["nmap", "nuclei", "nikto", "zap", "wappalyzer", "metasploit", "openvas"]
     elif isinstance(request.scanners, list):
-        # Old style list -> convert to dict with empty params
-        for name in request.scanners:
-            worker_config[name] = {}
+        selected_scanners = request.scanners
     elif isinstance(request.scanners, dict):
-        # New style config -> filter enabled ones
+        selected_scanners = [k for k, v in request.scanners.items() if v.enabled]
+        # Merge params from the dict immediately
         for name, cfg in request.scanners.items():
             if cfg.enabled:
                 worker_config[name] = cfg.params
 
-    # Extract just names for DB logging
-    scanner_names = list(worker_config.keys())
+    # 2. Merge with Advanced Config object (if provided)
+    # This allows cleaner JSON like: "config": {"nmap": {"speed": "T5"}}
+    for name in selected_scanners:
+        if name not in worker_config:
+            worker_config[name] = {}
+            
+        # Check if 'config' field has settings for this scanner
+        if request.config:
+            cfg_model = getattr(request.config, name, None)
+            if cfg_model:
+                worker_config[name].update(cfg_model.dict(exclude_none=True))
 
-    # 1. Create Job
+    # 3. Create Job
     new_job = Job(
         target=request.target, 
         status=JobStatus.PENDING,
-        scanners_requested=scanner_names
+        scanners_requested=list(worker_config.keys())
     )
     session.add(new_job)
     session.commit()
@@ -95,21 +122,18 @@ def start_scan(
     
     print(f"New job created: {new_job.id}")
 
-    # 2. Enqueue Task
-    # We pass the FULL configuration dictionary to the worker now
-    task = run_scan_task.delay(
+    # 4. Enqueue Task
+    run_scan_task.delay(
         job_id=str(new_job.id), 
         scanners=worker_config 
     )
-    print(f"Task enqueued: {task.id}")
     
     return ScanStartResponse(
         job_id=new_job.id,
         status=new_job.status,
         target=new_job.target,
-        scanners_requested=scanner_names
+        scanners_requested=new_job.scanners_requested
     )
-
 
 @router.get("/scan/status/{job_id}", response_model=ScanStatusResponse)
 def get_scan_status(
@@ -119,10 +143,6 @@ def get_scan_status(
     job = session.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-
-    # --- ENRICHMENT ON RETRIEVAL (Optional Layer) ---
-    # The worker does the heavy lifting, but we can do light touches here if needed.
-    # For now, we just return the worker's result.
     
     return ScanStatusResponse(
         job_id=job.id,
