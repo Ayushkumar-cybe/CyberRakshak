@@ -40,6 +40,10 @@ services:
     environment:
       DATABASE_URL: "postgresql://postgres:mysecretpassword@postgres:5432/sih_db"
       RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672//"
+    # --- ADD THIS SECTION ---
+    volumes:
+      - .:/app
+    # ------------------------
     depends_on:
       postgres:
         condition: service_healthy
@@ -57,9 +61,12 @@ services:
       DATABASE_URL: "postgresql://postgres:mysecretpassword@postgres:5432/sih_db"
       RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672//"
       HOST_PROJECT_PATH: "${PWD}" 
+    # --- UPDATE VOLUMES SECTION ---
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./outputs:/app/outputs
+      - .:/app  # <--- Add this line to map your code
+    # ------------------------------
     depends_on:
       postgres:
         condition: service_healthy

@@ -49,15 +49,16 @@ class VulnerabilityMetadata(SQLModel, table=True):
 
     # NVD Data
     description: Optional[str] = None
-    cvss_score: Optional[float] = None  # e.g. 9.8
-    severity: Optional[str] = None      # e.g. CRITICAL
-
-    # --- FIX: Add this missing field ---
-    vector_string: Optional[str] = None # e.g. CVSS:3.1/AV:N/AC:L...
-    # -----------------------------------
+    cvss_score: Optional[float] = None
+    severity: Optional[str] = None
+    vector_string: Optional[str] = None
 
     # Threat Intel
-    is_cisa_kev: bool = Field(default=False) # Is it in CISA KEV?
-    has_exploit: bool = Field(default=False) # Placeholder for ExploitDB
+    is_cisa_kev: bool = Field(default=False)
+    has_exploit: bool = Field(default=False)
+
+    # --- NEW: Store list of ExploitDB IDs ---
+    exploit_ids: List[str] = Field(default=[], sa_column=Column(JSON))
+    # ----------------------------------------
 
     last_updated: datetime = Field(default_factory=datetime.utcnow)
