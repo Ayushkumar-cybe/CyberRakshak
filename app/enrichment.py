@@ -1,62 +1,138 @@
 import requests
 import logging
+import time
 from typing import Dict, Any, Optional
+from sqlmodel import Session, select
+from app.database import engine
+from app.models import VulnerabilityMetadata
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-# CISA Known Exploited Vulnerabilities Catalog URL
 CISA_KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
 def get_cisa_kev_data() -> Dict[str, Any]:
-    """
-    Fetches the CISA Known Exploited Vulnerabilities (KEV) catalog.
-    Returns a dictionary mapping CVE IDs to their KEV data.
-    """
+    """Fetches CISA KEV catalog."""
     cve_map = {}
     try:
         response = requests.get(CISA_KEV_URL, timeout=10)
         response.raise_for_status()
         data = response.json()
-
         for vuln in data.get("vulnerabilities", []):
             cve_id = vuln.get("cveID")
             if cve_id:
                 cve_map[cve_id] = {
                     "is_exploited": True,
-                    "vendor_project": vuln.get("vendorProject"),
-                    "product": vuln.get("product"),
                     "date_added": vuln.get("dateAdded"),
-                    "short_description": vuln.get("shortDescription"),
                     "required_action": vuln.get("requiredAction")
                 }
     except Exception as e:
-        logger.error(f"Failed to fetch CISA KEV data: {e}")
-
+        logger.error(f"Failed to fetch CISA KEV: {e}")
     return cve_map
+
+def fetch_nvd_data(cve_id: str) -> Optional[Dict[str, Any]]:
+    """Queries NIST NVD API for a single CVE (Rate Limited)."""
+    try:
+        # Sleep to respect NVD rate limits (without key: ~5 requests/30s)
+        time.sleep(6) 
+        
+        resp = requests.get(f"{NVD_API_URL}?cveId={cve_id}", timeout=10)
+        if resp.status_code != 200:
+            return None
+            
+        data = resp.json()
+        vulnerabilities = data.get("vulnerabilities", [])
+        if not vulnerabilities:
+            return None
+            
+        cve_item = vulnerabilities[0].get("cve", {})
+        metrics = cve_item.get("metrics", {})
+        
+        # Try CVSS 3.1, fallback to 3.0 or 2.0
+        cvss_data = None
+        if "cvssMetricV31" in metrics:
+            cvss_data = metrics["cvssMetricV31"][0].get("cvssData", {})
+        elif "cvssMetricV30" in metrics:
+            cvss_data = metrics["cvssMetricV30"][0].get("cvssData", {})
+        elif "cvssMetricV2" in metrics:
+             cvss_data = metrics["cvssMetricV2"][0].get("cvssData", {})
+
+        desc_list = cve_item.get("descriptions", [])
+        description = desc_list[0].get("value", "No description") if desc_list else "No description"
+
+        return {
+            "description": description,
+            "cvss_score": cvss_data.get("baseScore") if cvss_data else 0.0,
+            "severity": cvss_data.get("baseSeverity") if cvss_data else "UNKNOWN",
+            "vector_string": cvss_data.get("vectorString") if cvss_data else None
+        }
+    except Exception as e:
+        logger.error(f"NVD API failed for {cve_id}: {e}")
+        return None
 
 def enrich_vulnerability(vuln: Dict[str, Any], cisa_cache: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Enriches a single vulnerability object with CISA data.
+    Enriches a vuln object using Local DB Cache + NVD API + CISA.
     """
-    # Nuclei often puts the CVE in 'template_id' (e.g., CVE-2023-48795)
-    # or we might have to parse it from the title.
     cve_id = vuln.get("template_id", "").upper()
-
-    # Simple check: Does it look like a CVE?
+    
+    # If no CVE ID, or it doesn't look like a CVE, skip complex enrichment
     if not cve_id.startswith("CVE-"):
-        return vuln # Return generic vulns unenriched
+        # Simple non-CVE enrichment
+        return {**vuln, "enrichment": {"cisa_kev": False, "cvss": "N/A"}}
 
     enrichment_data = {
         "cve_id": cve_id,
         "cisa_kev": False,
-        "cisa_details": None
+        "cisa_details": None,
+        "nvd_data": None
     }
 
-    # Check CISA KEV (Fast Lookup)
+    # 1. CISA Check (Fast memory lookup)
     if cve_id in cisa_cache:
         enrichment_data["cisa_kev"] = True
         enrichment_data["cisa_details"] = cisa_cache[cve_id]
 
-    # Attach enrichment to the vuln object
+    # 2. NVD / Smart Cache Lookup
+    with Session(engine) as session:
+        # Check DB
+        cached_vuln = session.get(VulnerabilityMetadata, cve_id)
+        
+        if cached_vuln:
+            # HIT: Use cached data
+            enrichment_data["nvd_data"] = {
+                "score": cached_vuln.cvss_score,
+                "severity": cached_vuln.severity,
+                "vector": cached_vuln.vector_string,
+                "description": cached_vuln.description
+            }
+        else:
+            # MISS: Fetch from NVD API
+            print(f"Fetching NVD data for {cve_id}...")
+            nvd_info = fetch_nvd_data(cve_id)
+            
+            if nvd_info:
+                # Save to DB
+                new_meta = VulnerabilityMetadata(
+                    cve_id=cve_id,
+                    description=nvd_info["description"],
+                    cvss_score=nvd_info["cvss_score"],
+                    severity=nvd_info["severity"],
+                    vector_string=nvd_info["vector_string"],
+                    is_cisa_kev=enrichment_data["cisa_kev"]
+                )
+                session.add(new_meta)
+                session.commit()
+                
+                enrichment_data["nvd_data"] = {
+                    "score": nvd_info["cvss_score"],
+                    "severity": nvd_info["severity"],
+                    "vector": nvd_info["vector_string"],
+                    "description": nvd_info["description"]
+                }
+            else:
+                enrichment_data["nvd_data"] = {"error": "Not found in NVD"}
+
     vuln["enrichment"] = enrichment_data
     return vuln

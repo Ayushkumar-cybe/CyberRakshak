@@ -40,3 +40,24 @@ class AuditLog(SQLModel, table=True):
     event_type: str  # e.g., "SCAN_STARTED", "SCAN_FINISHED", "ERROR"
     details: Dict = Field(default={}, sa_column=Column(JSON))
     job_id: Optional[uuid.UUID] = Field(default=None, foreign_key="job.id")
+
+class VulnerabilityMetadata(SQLModel, table=True):
+    """
+    Permanent cache for CVE information.
+    """
+    cve_id: str = Field(primary_key=True) # e.g., CVE-2021-44228
+
+    # NVD Data
+    description: Optional[str] = None
+    cvss_score: Optional[float] = None  # e.g. 9.8
+    severity: Optional[str] = None      # e.g. CRITICAL
+
+    # --- FIX: Add this missing field ---
+    vector_string: Optional[str] = None # e.g. CVSS:3.1/AV:N/AC:L...
+    # -----------------------------------
+
+    # Threat Intel
+    is_cisa_kev: bool = Field(default=False) # Is it in CISA KEV?
+    has_exploit: bool = Field(default=False) # Placeholder for ExploitDB
+
+    last_updated: datetime = Field(default_factory=datetime.utcnow)
