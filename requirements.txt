@@ -15,3 +15,5 @@ psycopg2-binary # Postgres driver
 python-dotenv  # To read .env files
 pydantic-settings # For managing config
 requests
+networkx
+fpdf2
