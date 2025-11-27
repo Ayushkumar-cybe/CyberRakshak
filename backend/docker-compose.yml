@@ -1,22 +1,4 @@
-version: '3.8'
-
 services:
-  # Frontend Service
-  frontend:
-    build:
-      context: ./Frontend
-      dockerfile: Dockerfile
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./Frontend:/app
-      - /app/node_modules
-    environment:
-      - NODE_ENV=development
-    depends_on:
-      - backend
-
-  # Include all backend services
   postgres:
     image: postgres:15
     container_name: sih-postgres
@@ -50,7 +32,7 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: .
       dockerfile: Dockerfile.api
     container_name: sih-backend
     ports:
@@ -59,7 +41,7 @@ services:
       DATABASE_URL: "postgresql://postgres:mysecretpassword@postgres:5432/sih_db"
       RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672//"
     volumes:
-      - ./backend:/app
+      - .:/app
     depends_on:
       postgres:
         condition: service_healthy
@@ -69,18 +51,18 @@ services:
 
   celery-worker:
     build:
-      context: ./backend
+      context: .
       dockerfile: Dockerfile.worker
     container_name: sih-celery-worker
     environment:
       DOCKER_ENV: "true" 
       DATABASE_URL: "postgresql://postgres:mysecretpassword@postgres:5432/sih_db"
       RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672//"
-      HOST_PROJECT_PATH: "${PWD}/backend" 
+      HOST_PROJECT_PATH: "${PWD}" 
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./backend/outputs:/app/outputs
-      - ./backend:/app
+      - ./outputs:/app/outputs
+      - .:/app
     depends_on:
       postgres:
         condition: service_healthy
@@ -90,7 +72,7 @@ services:
 
   wappalyzer:
     build:
-      context: ./backend
+      context: .
       dockerfile: Dockerfile.wappalyzer
     image: local/wappalyzer
     container_name: sih-wappalyzer-builder
@@ -99,7 +81,7 @@ services:
 
   gvm-tools:
     build:
-      context: ./backend
+      context: .
       dockerfile: Dockerfile.gvm-tools
     image: local/gvm-tools
     container_name: sih-gvm-tools-builder
