@@ -3,10 +3,9 @@ import ReactFlow, {
   Background,
   Controls,
   MiniMap,
-  BackgroundVariant,
-  Node,
-  Edge
+  BackgroundVariant
 } from "reactflow";
+import type { Node, Edge } from "reactflow"; // <--- Imported as Types
 import "reactflow/dist/style.css";
 import AttackNodeDrawer from "./AttackNodeDrawer";
 // Import the API service

@@ -1,5 +1,5 @@
 // API Service Layer for CyberRakshak Frontend
-const API_BASE_URL = 'http://localhost:8000/api';
+const API_BASE_URL = 'http://161.118.189.151:8000/api';
 
 interface ScanStartRequest {
   target: string;
