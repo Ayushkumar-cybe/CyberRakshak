@@ -40,10 +40,8 @@ services:
     environment:
       DATABASE_URL: "postgresql://postgres:mysecretpassword@postgres:5432/sih_db"
       RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672//"
-    # --- ADD THIS SECTION ---
     volumes:
       - .:/app
-    # ------------------------
     depends_on:
       postgres:
         condition: service_healthy
@@ -61,12 +59,10 @@ services:
       DATABASE_URL: "postgresql://postgres:mysecretpassword@postgres:5432/sih_db"
       RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672//"
       HOST_PROJECT_PATH: "${PWD}" 
-    # --- UPDATE VOLUMES SECTION ---
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./outputs:/app/outputs
-      - .:/app  # <--- Add this line to map your code
-    # ------------------------------
+      - .:/app
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,7 +70,6 @@ services:
         condition: service_healthy
     restart: always
 
-  # Builder for Wappalyzer
   wappalyzer:
     build:
       context: .
@@ -84,7 +79,6 @@ services:
     entrypoint: ["echo", "Wappalyzer image built and ready."]
     restart: "no"
 
-  # --- NEW: Builder for GVM Tools (OpenVAS Automation) ---
   gvm-tools:
     build:
       context: .
@@ -93,9 +87,7 @@ services:
     container_name: sih-gvm-tools-builder
     entrypoint: ["echo", "GVM Tools image built."]
     restart: "no"
-  # -------------------------------------------------------
 
-  # Builder/Cache for Metasploit
   metasploit:
     image: metasploitframework/metasploit-framework
     container_name: sih-metasploit-cache

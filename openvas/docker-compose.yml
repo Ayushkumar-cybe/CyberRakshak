@@ -56,6 +56,7 @@ services:
     restart: on-failure
     volumes:
       - redis_socket_vol:/run/redis/
+      - redis_data_vol:/data
 
   pg-gvm:
     image: registry.community.greenbone.net/community/pg-gvm:stable
@@ -228,3 +229,4 @@ volumes:
   redis_socket_vol:
   openvas_data_vol:
   openvas_log_data_vol:
+  redis_data_vol:

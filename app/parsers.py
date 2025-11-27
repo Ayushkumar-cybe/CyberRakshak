@@ -8,11 +8,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 def parse_nmap(file_path: str) -> Dict[str, Any]:
-    """
-    Parses Nmap XML output to extract host info and open ports.
-    """
+    """Parses Nmap XML output."""
     results = {"host_info": {}, "open_ports": []}
-    
     try:
         tree = ET.parse(file_path)
         root = tree.getroot()
@@ -20,14 +17,9 @@ def parse_nmap(file_path: str) -> Dict[str, Any]:
         logger.error(f"Error reading Nmap file {file_path}: {e}")
         return results
 
-    # Find the <host> element. 
-    # Note: If scanning multiple IPs, this usually finds the first one.
-    # For this project, we assume one target per job.
     host = root.find("host")
-    if not host:
-        return results
+    if not host: return results
 
-    # 1. Extract Host Info (IP, Hostnames)
     address = host.find("address")
     if address is not None:
         results["host_info"]["ip"] = address.get("addr")
@@ -35,29 +27,20 @@ def parse_nmap(file_path: str) -> Dict[str, Any]:
 
     hostnames = host.find("hostnames")
     if hostnames:
-        # Extract all hostname tags
         names = [hn.get("name") for hn in hostnames.findall("hostname")]
         results["host_info"]["hostnames"] = names
 
-    # 2. Extract Open Ports and Services
     ports_element = host.find("ports")
     if ports_element:
         for port in ports_element.findall("port"):
             state = port.find("state")
-            # We only care about open ports
             if state is not None and state.get("state") == "open":
                 port_id = int(port.get("portid"))
                 protocol = port.get("protocol")
-                
                 service = port.find("service")
-                service_name = "unknown"
-                product = ""
-                version = ""
-                
-                if service is not None:
-                    service_name = service.get("name", "unknown")
-                    product = service.get("product", "")
-                    version = service.get("version", "")
+                service_name = service.get("name", "unknown") if service is not None else "unknown"
+                product = service.get("product", "") if service is not None else ""
+                version = service.get("version", "") if service is not None else ""
 
                 results["open_ports"].append({
                     "port": port_id,
@@ -66,28 +49,18 @@ def parse_nmap(file_path: str) -> Dict[str, Any]:
                     "product": product,
                     "version": version
                 })
-
     return results
 
-
 def parse_nuclei(file_path: str) -> List[Dict[str, Any]]:
-    """
-    Parses Nuclei JSONL output.
-    Each line is a separate JSON object representing a vulnerability.
-    """
+    """Parses Nuclei JSONL output."""
     vulnerabilities = []
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             for line in f:
-                if not line.strip():
-                    continue
+                if not line.strip(): continue
                 try:
                     data = json.loads(line)
-                    
-                    # Extract key fields for our normalized report
                     info = data.get("info", {})
-                    
-                    # Build a standardized vulnerability object
                     vuln = {
                         "tool": "nuclei",
                         "title": info.get("name", "Unknown Vulnerability"),
@@ -101,34 +74,23 @@ def parse_nuclei(file_path: str) -> List[Dict[str, Any]]:
                         "references": info.get("reference", [])
                     }
                     vulnerabilities.append(vuln)
-                except json.JSONDecodeError:
-                    continue
+                except json.JSONDecodeError: continue
     except Exception as e:
         logger.error(f"Error reading Nuclei file {file_path}: {e}")
-        
     return vulnerabilities
 
-
 def parse_nikto(file_path: str) -> List[Dict[str, Any]]:
-    """
-    Parses Nikto JSON output.
-    Based on your sample, the root is a LIST of hosts.
-    [ { "host": "...", "vulnerabilities": [ ... ] } ]
-    """
+    """Parses Nikto JSON output."""
     vulnerabilities = []
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            
-            # Nikto output is a list of host objects
             if isinstance(data, list):
                 for host_data in data:
-                    # Each host has a 'vulnerabilities' list
                     for item in host_data.get("vulnerabilities", []):
                          vuln = {
                             "tool": "nikto",
                             "title": item.get("msg", "Web Server Issue"),
-                            # Nikto doesn't standard severity, default to 'info' or 'low'
                             "severity": "unknown", 
                             "description": f"OSVDB: {item.get('osvdb', 'N/A')}. Method: {item.get('method')}",
                             "url": item.get("url"),
@@ -136,8 +98,6 @@ def parse_nikto(file_path: str) -> List[Dict[str, Any]]:
                             "references": [item.get("references", "")]
                          }
                          vulnerabilities.append(vuln)
-            
-            # Fallback: sometimes it might be a dict if single target (older versions)
             elif isinstance(data, dict):
                  for item in data.get("vulnerabilities", []):
                      vuln = {
@@ -150,27 +110,21 @@ def parse_nikto(file_path: str) -> List[Dict[str, Any]]:
                         "references": [item.get("references", "")]
                      }
                      vulnerabilities.append(vuln)
-
     except Exception as e:
         logger.error(f"Error reading Nikto file {file_path}: {e}")
-
     return vulnerabilities
 
 def parse_zap(file_path: str) -> List[Dict[str, Any]]:
-    """
-    Parses OWASP ZAP JSON output.
-    """
+    """Parses OWASP ZAP JSON output."""
     vulnerabilities = []
     try:
         with open(file_path, 'r') as f:
             data = json.load(f)
-            # ZAP reports are hierarchical: site -> alerts
             for site in data.get("site", []):
                 for alert in site.get("alerts", []):
                     vuln = {
                         "tool": "zap",
                         "title": alert.get("name", "Unknown Vulnerability"),
-                        # ZAP uses "High", "Medium", "Low", "Informational"
                         "severity": alert.get("riskdesc", "Info").split()[0].lower(),
                         "description": alert.get("desc", ""),
                         "solution": alert.get("solution", ""),
@@ -183,15 +137,11 @@ def parse_zap(file_path: str) -> List[Dict[str, Any]]:
     return vulnerabilities
 
 def parse_wappalyzer(file_path: str) -> List[Dict[str, Any]]:
-    """
-    Parses Wappalyzer JSON output.
-    """
+    """Parses Wappalyzer JSON output."""
     technologies = []
     try:
         with open(file_path, 'r') as f:
             data = json.load(f)
-
-            # Wappalyzer structure: {"urls": {"http://target/": {"technologies": [...]}}}
             for url, info in data.get("urls", {}).items():
                 for tech in info.get("technologies", []):
                     technologies.append({
@@ -202,30 +152,17 @@ def parse_wappalyzer(file_path: str) -> List[Dict[str, Any]]:
                     })
     except Exception as e:
         logger.error(f"Error reading Wappalyzer file {file_path}: {e}")
-
     return technologies
 
 def parse_metasploit(file_path: str) -> List[Dict[str, Any]]:
-    """
-    Parses Metasploit (msfconsole) text output.
-    Extracts information from auxiliary scanner modules, ignoring warnings.
-    """
+    """Parses Metasploit output."""
     vulnerabilities = []
     try:
         with open(file_path, 'r') as f:
             content = f.read()
-
-        # Debug: Log what we read (optional, good for troubleshooting)
-        # logger.info(f"Parsing Metasploit output: {content[:200]}...")
-
         for line in content.splitlines():
             line = line.strip()
-            
-            # Skip empty lines or warnings
-            if not line or "deprecated" in line.lower() or "Gem::" in line:
-                continue
-
-            # Look for lines starting with "[+]" (Success in Metasploit)
+            if not line or "deprecated" in line.lower() or "Gem::" in line: continue
             if line.startswith("[+]"):
                 vuln = {
                     "tool": "metasploit",
@@ -234,47 +171,47 @@ def parse_metasploit(file_path: str) -> List[Dict[str, Any]]:
                     "description": line,
                     "raw_output": line
                 }
-                
-                # Try to make the title more specific
-                if "SSH server version" in line:
-                    vuln["title"] = "SSH Version Detected"
-                elif "Anonymous READ" in line:
+                if "SSH server version" in line: vuln["title"] = "SSH Version Detected"
+                elif "Anonymous READ" in line: 
                     vuln["title"] = "Anonymous FTP Access"
                     vuln["severity"] = "medium"
-                elif "OS:" in line:
-                    vuln["title"] = "OS Detection (SMB)"
-                elif "Apache" in line or "nginx" in line:
-                     vuln["title"] = "Web Server Version Detected"
-
+                elif "OS:" in line: vuln["title"] = "OS Detection"
+                elif "Apache" in line or "nginx" in line: vuln["title"] = "Web Server Version Detected"
                 vulnerabilities.append(vuln)
-
     except Exception as e:
         logger.error(f"Error reading Metasploit file {file_path}: {e}")
-    
     return vulnerabilities
 
 def parse_openvas(file_path: str) -> List[Dict[str, Any]]:
-    """
-    Parses OpenVAS XML report.
-    """
+    """Parses OpenVAS XML report safely."""
     vulnerabilities = []
+    
+    def safe_text(element, tag, default=""):
+        if element is None: return default
+        child = element.find(tag)
+        if child is None or child.text is None: return default
+        return child.text
+
     try:
         tree = ET.parse(file_path)
         root = tree.getroot()
 
-        # Iterate over results
         for result in root.findall(".//result"):
-            name = result.find("name").text
-            description = result.find("description").text
-            severity_score = result.find("severity").text
+            name = safe_text(result, "name", "Unknown Vulnerability")
+            description = safe_text(result, "description", "No description provided.")
+            severity_score = safe_text(result, "severity", "0.0")
+            
+            try: score = float(severity_score)
+            except ValueError: score = 0.0
 
-            # Convert score to label
-            score = float(severity_score)
             if score >= 9.0: severity = "critical"
             elif score >= 7.0: severity = "high"
             elif score >= 4.0: severity = "medium"
             elif score > 0.0: severity = "low"
             else: severity = "info"
+
+            nvt_element = result.find("nvt")
+            nvt_oid = nvt_element.get("oid") if nvt_element is not None else ""
 
             vuln = {
                 "tool": "openvas",
@@ -282,11 +219,12 @@ def parse_openvas(file_path: str) -> List[Dict[str, Any]]:
                 "severity": severity,
                 "description": description,
                 "cvss_score": severity_score,
-                "host": result.find("host").text,
-                "port": result.find("port").text,
-                "nvt_oid": result.find("nvt").get("oid")
+                "host": safe_text(result, "host", "unknown"),
+                "port": safe_text(result, "port", "unknown"),
+                "nvt_oid": nvt_oid
             }
             vulnerabilities.append(vuln)
+            
     except Exception as e:
         logger.error(f"Error reading OpenVAS file {file_path}: {e}")
 

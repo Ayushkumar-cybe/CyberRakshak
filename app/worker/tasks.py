@@ -3,15 +3,18 @@ import uuid
 import subprocess
 import os
 import json
-import requests
 import concurrent.futures
-from sqlmodel import Session, select
+import urllib3
+from sqlmodel import Session
 from app.worker.celery_app import celery_app
 from app.database import engine
 from app.models import Job, JobStatus
 from typing import List, Dict, Any, Optional
 from app.parsers import parse_nmap, parse_nuclei, parse_nikto, parse_zap, parse_wappalyzer, parse_metasploit, parse_openvas
 from app.enrichment import get_cisa_kev_data, enrich_vulnerability
+
+# Disable self-signed cert warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 INTERNAL_OUTPUTS_DIR = os.path.abspath("outputs")
 os.makedirs(INTERNAL_OUTPUTS_DIR, exist_ok=True)
@@ -24,7 +27,6 @@ def update_tool_status(job_id: uuid.UUID, tool_name: str, status: str):
     with Session(engine) as session:
         job = session.get(Job, job_id)
         if job:
-            # We must copy, update, and re-assign to trigger SQLModel change detection for JSON fields
             current_status = job.tool_status.copy()
             current_status[tool_name] = status
             job.tool_status = current_status
@@ -40,7 +42,7 @@ def run_nmap(target: str, host_dir: str, internal_dir: str, config: Dict[str, An
     speed = config.get("speed", "T4")
     ports = config.get("ports")
     script = config.get("script")
-    raw_args = config.get("raw_args") # New: Power User Args
+    raw_args = config.get("raw_args")
 
     cmd = [
         "docker", "run", "--rm",
@@ -49,15 +51,28 @@ def run_nmap(target: str, host_dir: str, internal_dir: str, config: Dict[str, An
         "-sV", f"-{speed}", 
         "-oX", "/output/nmap.xml"
     ]
-    if ports: cmd.extend(["-p", ports])
+    
+    # --- FIX: Handle 'top-100' logic properly ---
+    if ports:
+        if str(ports).startswith("top-"):
+             # Convert "top-100" -> ["--top-ports", "100"]
+            cmd.extend(["--top-ports", ports.split("-")[1]])
+        else:
+            cmd.extend(["-p", ports])
+    # ---------------------------------------------
+
     if script: cmd.extend(["--script", script])
-    if raw_args: cmd.extend(raw_args) # Inject custom flags
+    if raw_args: cmd.extend(raw_args)
 
     cmd.append(target)
     
-    subprocess.run(cmd, check=True, capture_output=True, text=True)
-    print("Nmap completed.")
-    return output_file
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        print("Nmap completed.")
+        return output_file
+    except subprocess.CalledProcessError as e:
+        print(f"Nmap Failed: {e.stderr}")
+        return None
 
 def run_nuclei(target: str, host_dir: str, internal_dir: str, config: Dict[str, Any]) -> Optional[str]:
     print(f"Starting Nuclei for {target}...")
@@ -78,9 +93,13 @@ def run_nuclei(target: str, host_dir: str, internal_dir: str, config: Dict[str, 
     if severity: cmd.extend(["-severity", severity])
     if raw_args: cmd.extend(raw_args)
 
-    subprocess.run(cmd, check=True, capture_output=True, text=True)
-    print("Nuclei completed.")
-    return output_file
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        print("Nuclei completed.")
+        return output_file
+    except subprocess.CalledProcessError as e:
+        print(f"Nuclei Failed: {e.stderr}")
+        return None
 
 def run_nikto(target: str, host_dir: str, internal_dir: str, config: Dict[str, Any]) -> Optional[str]:
     print(f"Starting Nikto for {target}...")
@@ -101,9 +120,14 @@ def run_nikto(target: str, host_dir: str, internal_dir: str, config: Dict[str, A
     ]
     if raw_args: cmd.extend(raw_args)
 
-    subprocess.run(cmd, check=True, capture_output=True, text=True)
-    print("Nikto completed.")
-    return output_file
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        print("Nikto completed.")
+        return output_file
+    except subprocess.CalledProcessError:
+        # Nikto often returns non-zero even on success findings, so we check for file
+        if os.path.exists(output_file): return output_file
+        return None
 
 def run_zap(target: str, host_dir: str, internal_dir: str, config: Dict[str, Any]) -> Optional[str]:
     print(f"Starting ZAP for {target}...")
@@ -111,7 +135,6 @@ def run_zap(target: str, host_dir: str, internal_dir: str, config: Dict[str, Any
     target_url = target if target.startswith("http") else f"http://{target}"
     
     mode = config.get("mode", "baseline")
-    raw_args = config.get("raw_args")
     script = "zap-full-scan.py" if mode == "full" else "zap-baseline.py"
     
     cmd = [
@@ -123,7 +146,6 @@ def run_zap(target: str, host_dir: str, internal_dir: str, config: Dict[str, Any
         "-t", target_url,
         "-J", "zap.json"
     ]
-    if raw_args: cmd.extend(raw_args)
 
     subprocess.run(cmd, check=False, capture_output=True, text=True)
     print("ZAP completed.")
@@ -173,8 +195,7 @@ def run_openvas(target: str, host_dir: str, internal_dir: str, config: Dict[str,
     config_id = "daba56c8-73ec-11df-a475-002264764cea"
     if profile == "Discovery": config_id = "8715c877-47a0-471c-8f13-5266c9931727"
     
-    # Note: raw_args not easily supported for GMP script injection yet
-    
+    # --- FIX: Robust GMP Script that checks if reports exist ---
     gmp_script = f"""
 import sys
 import time
@@ -183,46 +204,84 @@ from gvm.protocols.gmp import Gmp
 from gvm.transforms import EtreeTransform
 from lxml import etree
 
-connection = UnixSocketConnection(path='/run/gvmd/gvmd.sock')
-transform = EtreeTransform()
+try:
+    connection = UnixSocketConnection(path='/run/gvmd/gvmd.sock', timeout=30)
+    transform = EtreeTransform()
 
-with Gmp(connection, transform=transform) as gmp:
-    gmp.authenticate('admin', 'admin')
-    response = gmp.create_target(name="Scan-{target}-" + str(time.time()), hosts=["{target}"], port_list_id="33d0cd82-57c6-11e1-8ed1-406186ea4fc5")
-    target_id = response.get('id')
-    response = gmp.create_task(name="Task-{target}", config_id="{config_id}", target_id=target_id, scanner_id="08b69003-5fc2-4037-a479-93b440211c73")
-    task_id = response.get('id')
-    gmp.start_task(task_id)
-    
-    while True:
+    with Gmp(connection, transform=transform) as gmp:
+        gmp.authenticate('admin', 'admin')
+        
+        # Create Target
+        response = gmp.create_target(name="Scan-{target}-" + str(time.time()), hosts=["{target}"], port_list_id="33d0cd82-57c6-11e1-8ed1-406186ea4fc5")
+        target_id = response.get('id')
+        if not target_id:
+            print("Error: Failed to create target", file=sys.stderr)
+            sys.exit(1)
+        
+        # Create Task
+        response = gmp.create_task(name="Task-{target}", config_id="{config_id}", target_id=target_id, scanner_id="08b69003-5fc2-4037-a479-93b440211c73")
+        task_id = response.get('id')
+        if not task_id:
+            print("Error: Failed to create task", file=sys.stderr)
+            sys.exit(1)
+        
+        # Start Task
+        gmp.start_task(task_id)
+        
+        # Poll Status
+        while True:
+            response = gmp.get_task(task_id)
+            status_list = response.xpath('task/status/text()')
+            
+            if not status_list:
+                print("Error: Failed to get status", file=sys.stderr)
+                break
+                
+            status = status_list[0]
+            
+            if status == 'Done': break
+            if status in ['Stopped', 'Interrupted', 'New']: 
+                print(f"Scan stopped prematurely: {{status}}", file=sys.stderr)
+                break
+            time.sleep(15)
+        
+        # Get Report
         response = gmp.get_task(task_id)
-        status = response.xpath('task/status/text()')[0]
-        if status == 'Done': break
-        if status in ['Stopped', 'Interrupted']: break
-        time.sleep(30)
-    
-    response = gmp.get_task(task_id)
-    report_id = response.xpath('task/last_report/report/@id')[0]
-    response = gmp.get_report(report_id, report_format_id="a994b278-1f62-11e1-96ac-406186ea4fc5")
-    print(etree.tostring(response, encoding='unicode'))
+        reports = response.xpath('task/last_report/report/@id')
+        
+        if not reports:
+             print("Error: No report generated. Scanner feeds might still be loading.", file=sys.stderr)
+             sys.exit(1)
+             
+        report_id = reports[0]
+        response = gmp.get_report(report_id, report_format_id="a994b278-1f62-11e1-96ac-406186ea4fc5")
+        print(etree.tostring(response, encoding='unicode'))
+
+except Exception as e:
+    print(f"GMP Script Error: {{e}}", file=sys.stderr)
+    sys.exit(1)
 """
     script_path = os.path.join(internal_dir, script_filename)
     with open(script_path, 'w') as f: f.write(gmp_script)
     os.chmod(script_path, 0o644)
 
+    # --- FIX: Removed --network logic, relying on socket volume ---
     cmd = [
         "docker", "run", "--rm", "--user", "1001",
-        "--network", "greenbone-community-edition_default",
         "-v", "greenbone-community-edition_gvmd_socket_vol:/run/gvmd",
         "-v", f"{host_dir}:/scan",
         "local/gvm-tools",
-        "--gmp-username", "admin", "--gmp-password", "admin", 
         "socket", "--socketpath", "/run/gvmd/gvmd.sock",
         f"/scan/{script_filename}"
     ]
+    
     try:
         result = subprocess.run(cmd, check=False, capture_output=True, text=True)
-        if result.returncode != 0: return None
+        
+        if result.returncode != 0: 
+            print(f"OpenVAS Failed! Exit Code: {result.returncode}")
+            print(f"STDERR: {result.stderr}")
+            return None
         
         xml_content = result.stdout
         xml_start = xml_content.find('<report')
@@ -234,7 +293,9 @@ with Gmp(connection, transform=transform) as gmp:
              print("OpenVAS scan complete.")
              return output_file
         return None
-    except: return None
+    except Exception as e: 
+        print(f"OpenVAS Execution Error: {e}")
+        return None
 
 # --- WRAPPER FOR THREADING ---
 def run_scanner_wrapper(scanner_func, job_id, tool_name, *args):
@@ -294,7 +355,6 @@ def run_scan_task(self, job_id: str, scanners: Dict[str, Any]):
             future_to_scanner = {}
             for name, config in scanners.items():
                 if name in scanner_map:
-                    # Use the WRAPPER to handle DB updates
                     future = executor.submit(run_scanner_wrapper, scanner_map[name], job_uuid, name, job.target, host_dir, internal_dir, config)
                     future_to_scanner[future] = name
             
@@ -327,7 +387,6 @@ def run_scan_task(self, job_id: str, scanners: Dict[str, Any]):
         enriched_vulns = [enrich_vulnerability(v, cisa_cache) for v in vulnerabilities]
         normalized_data["vulnerabilities"] = enriched_vulns
 
-        # Final Status Update
         job.status = JobStatus.FAILED if all_failed else (JobStatus.PARTIAL_SUCCESS if failed_tools else JobStatus.COMPLETED)
         job.output_files = output_paths
         job.normalized_report = normalized_data
