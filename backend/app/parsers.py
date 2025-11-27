@@ -61,11 +61,17 @@ def parse_nuclei(file_path: str) -> List[Dict[str, Any]]:
                 try:
                     data = json.loads(line)
                     info = data.get("info", {})
+                    
+                    # Extract Classification for CVSS
+                    classification = info.get("classification", {})
+                    cvss_score = classification.get("cvss-score")
+
                     vuln = {
                         "tool": "nuclei",
                         "title": info.get("name", "Unknown Vulnerability"),
                         "severity": info.get("severity", "info"),
                         "description": info.get("description", ""),
+                        "cvss_score": cvss_score, # <--- Added this
                         "matcher_name": data.get("matcher-name"),
                         "template_id": data.get("template-id"),
                         "matched_at": data.get("matched-at"),

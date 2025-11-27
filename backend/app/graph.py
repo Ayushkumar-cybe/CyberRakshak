@@ -4,7 +4,7 @@ from typing import Dict, Any
 def build_attack_graph(report: Dict[str, Any]) -> Dict[str, Any]:
     """
     Converts a normalized scan report into a NetworkX graph JSON.
-    Structure: Host -> Ports -> Technologies -> Vulnerabilities
+    Calculates layout positions for React Flow.
     """
     G = nx.DiGraph()
     
@@ -15,7 +15,7 @@ def build_attack_graph(report: Dict[str, Any]) -> Dict[str, Any]:
     label = hostnames[0] if hostnames else ip
     
     root_id = "root"
-    G.add_node(root_id, label=label, type="host", color="#2563eb") # Blue
+    G.add_node(root_id, label=label, type="input", style={"background": "#2563eb", "color": "white"})
 
     # 2. Level 1: Ports
     for port in report.get("ports", []):
@@ -23,63 +23,81 @@ def build_attack_graph(report: Dict[str, Any]) -> Dict[str, Any]:
         label = f"{port['port']}/{port['protocol']}"
         service = port.get('service', 'unknown')
         
-        G.add_node(port_id, label=label, type="port", color="#16a34a") # Green
+        G.add_node(port_id, label=label, type="default", style={"background": "#16a34a", "color": "white"})
         G.add_edge(root_id, port_id)
         
-        # Add Service details as a sub-note if available
         if service and service != "unknown":
             service_id = f"service_{port['port']}"
-            G.add_node(service_id, label=service, type="service", color="#0891b2") # Cyan
+            G.add_node(service_id, label=service, type="default", style={"background": "#0891b2", "color": "white"})
             G.add_edge(port_id, service_id)
 
-    # 3. Level 2: Technologies (Wappalyzer)
-    # Tech doesn't always map to a specific port, so we link to Root for now
-    # unless we can infer it (e.g., Apache -> Port 80).
+    # 3. Level 2: Technologies (Robust Check)
     for tech in report.get("technologies", []):
-        tech_name = tech['name']
+        tech_name = tech.get('name')
+        if not tech_name: continue # Skip if name is missing (prevents KeyError)
+        
         tech_id = f"tech_{tech_name}"
         version = tech.get('version')
         label = f"{tech_name} {version}" if version else tech_name
         
-        G.add_node(tech_id, label=label, type="technology", color="#9333ea") # Purple
+        G.add_node(tech_id, label=label, type="default", style={"background": "#9333ea", "color": "white"})
         G.add_edge(root_id, tech_id)
 
-    # 4. Level 3: Vulnerabilities
-    # We try to link vulns to specific ports if the data exists
+    # 4. Level 3: Vulnerabilities (Robust Check)
     for vuln in report.get("vulnerabilities", []):
-        vuln_id = f"vuln_{vuln.get('tool')}_{vuln.get('title')[:10]}" # Short hash ID
-        title = vuln.get('title')
+        title = vuln.get('title', 'Unknown Finding')
+        tool = vuln.get('tool', 'unk')
+        
+        # Ensure ID generation is safe from NoneType errors
+        vuln_id = f"vuln_{tool}_{title[:10].replace(' ', '_')}"
         severity = vuln.get('severity', 'info').lower()
         
-        # Color code by severity
-        color = "#94a3b8" # Gray (Info)
-        if severity == "low": color = "#facc15" # Yellow
-        if severity == "medium": color = "#f97316" # Orange
-        if severity == "high": color = "#ef4444" # Red
-        if severity == "critical": color = "#991b1b" # Dark Red
+        bg_color = "#94a3b8"
+        if severity == "low": bg_color = "#facc15"
+        if severity == "medium": bg_color = "#f97316"
+        if severity == "high": bg_color = "#ef4444"
+        if severity == "critical": bg_color = "#991b1b"
 
-        G.add_node(vuln_id, label=title, type="vulnerability", severity=severity, color=color)
+        G.add_node(vuln_id, label=title, type="output", style={"background": bg_color, "color": "white"})
         
         # Link logic
-        linked = False
-        
-        # If vuln has a specific port (e.g. from Nmap/OpenVAS), link to that port
         v_port = vuln.get('port')
+        linked = False
         if v_port:
-            # Try to find the matching port node
-            # The report stores ports as ints, vuln might be string "80" or "80/tcp"
             try:
                 clean_port = str(v_port).split("/")[0]
                 port_node_id = f"port_{clean_port}"
                 if G.has_node(port_node_id):
                     G.add_edge(port_node_id, vuln_id)
                     linked = True
-            except:
-                pass
+            except: pass
 
-        # If not linked to a port, link to root
         if not linked:
             G.add_edge(root_id, vuln_id)
 
-    # Convert to frontend-friendly JSON (Node-Link data)
-    return nx.node_link_data(G)
+    # --- LAYOUT CALCULATION ---
+    pos = nx.spring_layout(G, scale=400, seed=42)
+    
+    output = {"nodes": [], "edges": []}
+    
+    for node_id in G.nodes:
+        node_attrs = G.nodes[node_id]
+        x, y = pos[node_id]
+        output["nodes"].append({
+            "id": node_id,
+            "data": { "label": node_attrs.get("label", node_id) },
+            "position": { "x": x, "y": y },
+            "type": node_attrs.get("type", "default"),
+            "style": node_attrs.get("style", {})
+        })
+        
+    for u, v in G.edges:
+        output["edges"].append({
+            "id": f"e_{u}_{v}",
+            "source": u,
+            "target": v,
+            "animated": True,
+            "style": { "stroke": "#b1b1b7" }
+        })
+
+    return output

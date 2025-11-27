@@ -1,12 +1,34 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import ReportSummaryCards from "../components/reports/ReportSummaryCards";
 import ReportTable from "../components/reports/ReportTable";
 import GenerateReportModal from "../components/reports/GenerateReportModal";
 import ReportFilters from "../components/reports/ReportFilters";
+import { getReportStats } from "../services/api";
 
 const Reports = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [filters, setFilters] = useState({});
+  
+  // State for real stats
+  const [stats, setStats] = useState({
+    total: 0,
+    completed: 0,
+    pending: 0,
+    failed: 0
+  });
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const data = await getReportStats();
+        setStats(data);
+      } catch (error) {
+        console.error("Failed to fetch report stats:", error);
+      }
+    };
+
+    fetchStats();
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -28,8 +50,8 @@ const Reports = () => {
         </button>
       </div>
 
-      {/* Summary Cards */}
-      <ReportSummaryCards />
+      {/* Summary Cards (Dynamic) */}
+      <ReportSummaryCards stats={stats} />
 
       {/* Filters */}
       <div className="bg-white dark:bg-slate-800 rounded-xl shadow p-5 space-y-4">

@@ -1,8 +1,11 @@
 import React from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 
-const GlobalRiskScore = () => {
-  const score = 742;
+interface Props {
+  score: number;
+}
+
+const GlobalRiskScore = ({ score }: Props) => {
 
   const data = [
     { name: "score", value: score },

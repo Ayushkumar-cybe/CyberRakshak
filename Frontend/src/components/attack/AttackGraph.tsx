@@ -3,158 +3,84 @@ import ReactFlow, {
   Background,
   Controls,
   MiniMap,
-  BackgroundVariant
+  BackgroundVariant,
+  useNodesState,
+  useEdgesState
 } from "reactflow";
-import type { Node, Edge } from "reactflow"; // <--- Imported as Types
+import type { Node, Edge } from "reactflow";
 import "reactflow/dist/style.css";
 import AttackNodeDrawer from "./AttackNodeDrawer";
-// Import the API service
 import { getScanGraph } from "../../services/api";
 
-const initialNodes: Node[] = [
-  {
-    id: "internet",
-    position: { x: 300, y: 20 },
-    data: { label: "Internet" },
-    style: {
-      padding: 12,
-      borderRadius: 8,
-      border: "2px solid #0ea5e9",
-      background: "white",
-    },
-  },
-  {
-    id: "web",
-    position: { x: 300, y: 140 },
-    data: { label: "Web Server" },
-    style: {
-      padding: 12,
-      borderRadius: 8,
-      border: "2px solid #f97316",
-      background: "white",
-    },
-  },
-  {
-    id: "app",
-    position: { x: 300, y: 260 },
-    data: { label: "Application Server" },
-    style: {
-      padding: 12,
-      borderRadius: 8,
-      border: "2px solid #3b82f6",
-      background: "white",
-    },
-  },
-  {
-    id: "db",
-    position: { x: 300, y: 380 },
-    data: { label: "Database" },
-    style: {
-      padding: 12,
-      borderRadius: 8,
-      border: "2px solid #10b981",
-      background: "white",
-    },
-  },
-  {
-    id: "workstation",
-    position: { x: 50, y: 260 },
-    data: { label: "Internal Workstation" },
-    style: {
-      padding: 12,
-      borderRadius: 8,
-      border: "2px solid #8b5cf6",
-      background: "white",
-    },
-  },
-  {
-    id: "dc",
-    position: { x: 50, y: 380 },
-    data: { label: "Domain Controller" },
-    style: {
-      padding: 12,
-      borderRadius: 8,
-      border: "2px solid #ef4444",
-      background: "white",
-    },
-  },
+// Demo Data (Only shown if NO job ID is provided)
+const demoNodes: Node[] = [
+  { id: "internet", position: { x: 300, y: 20 }, data: { label: "Internet" }, style: { background: "#fff", border: "1px solid #777", padding: 10 } },
+  { id: "demo-web", position: { x: 300, y: 150 }, data: { label: "Demo Web Server" }, style: { background: "#fff", border: "1px solid #777", padding: 10 } }
 ];
+const demoEdges: Edge[] = [{ id: "e1-demo", source: "internet", target: "demo-web", animated: true }];
 
-const initialEdges: Edge[] = [
-  {
-    id: "e1",
-    source: "internet",
-    target: "web",
-    animated: true,
-    className: "attack-edge",
-    style: { strokeWidth: 2 },
-  },
-  {
-    id: "e2",
-    source: "web",
-    target: "app",
-    animated: true,
-    className: "attack-edge",
-    style: { strokeWidth: 2 },
-  },
-  {
-    id: "e3",
-    source: "app",
-    target: "db",
-    animated: true,
-    className: "attack-edge",
-    style: { strokeWidth: 2 },
-  },
+interface Props {
+  initialJobId?: string;
+}
 
-  // SIDE PATH
-  {
-    id: "e4",
-    source: "web",
-    target: "workstation",
-    animated: false,
-    style: { stroke: "#8b5cf6", strokeWidth: 2 },
-  },
-  {
-    id: "e5",
-    source: "workstation",
-    target: "dc",
-    animated: false,
-    style: { stroke: "#8b5cf6", strokeWidth: 2 },
-  },
-];
-
-const AttackGraph = () => {
+const AttackGraph = ({ initialJobId }: Props) => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedNode, setSelectedNode] = useState<any>(null);
-  const [nodes, setNodes] = useState<Node[]>(initialNodes);
-  const [edges, setEdges] = useState<Edge[]>(initialEdges);
+  
+  // Use React Flow hooks for better state management
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  
   const [loading, setLoading] = useState(false);
-  const [jobId, setJobId] = useState<string>("");
+  const [jobId, setJobId] = useState<string>(initialJobId || "");
+  const [error, setError] = useState<string | null>(null);
 
   const fetchGraphData = async (id: string) => {
     if (!id) return;
     
+    console.log(`Fetching graph for Job ID: ${id}`);
     setLoading(true);
+    setError(null);
+    
     try {
       const graphData = await getScanGraph(id);
-      // Transform the data to match React Flow format
-      if (graphData && graphData.nodes && graphData.edges) {
-        setNodes(graphData.nodes);
-        setEdges(graphData.edges);
+      console.log("Graph Data Received:", graphData);
+
+      if (graphData && Array.isArray(graphData.nodes) && Array.isArray(graphData.edges)) {
+        if (graphData.nodes.length === 0) {
+          setError("No attack path data found for this scan.");
+          setNodes([]);
+          setEdges([]);
+        } else {
+          setNodes(graphData.nodes);
+          setEdges(graphData.edges);
+        }
+      } else {
+        console.error("Invalid graph format:", graphData);
+        setError("Received invalid graph data format from server.");
       }
-    } catch (error) {
-      console.error("Failed to fetch graph data:", error);
+    } catch (err) {
+      console.error("Failed to fetch graph:", err);
+      setError("Failed to load graph data.");
     } finally {
       setLoading(false);
     }
   };
 
+  // Load on mount or ID change
+  useEffect(() => {
+    if (initialJobId) {
+      setJobId(initialJobId);
+      fetchGraphData(initialJobId);
+    } else {
+      // Show demo data only if no ID provided
+      setNodes(demoNodes);
+      setEdges(demoEdges);
+    }
+  }, [initialJobId]);
+
   const handleJobIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setJobId(e.target.value);
-  };
-
-  const handleFetchGraph = () => {
-    fetchGraphData(jobId);
   };
 
   return (
@@ -170,7 +96,7 @@ const AttackGraph = () => {
             className="flex-1 p-2 border rounded-lg dark:bg-slate-700 dark:border-slate-600"
           />
           <button
-            onClick={handleFetchGraph}
+            onClick={() => fetchGraphData(jobId)}
             disabled={loading || !jobId}
             className={`px-4 py-2 rounded-lg ${
               loading || !jobId
@@ -181,14 +107,17 @@ const AttackGraph = () => {
             {loading ? "Loading..." : "Visualize"}
           </button>
         </div>
+        {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
       </div>
 
-      <div className="w-full h-[600px] rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700">
+      <div className="w-full h-[600px] rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 relative">
         <ReactFlow
           nodes={nodes}
           edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
           fitView
-          onNodeClick={(event, node) => {
+          onNodeClick={(_, node) => {
             setSelectedNode(node);
             setDrawerOpen(true);
           }}
@@ -197,6 +126,12 @@ const AttackGraph = () => {
           <Controls />
           <MiniMap />
         </ReactFlow>
+        
+        {loading && (
+          <div className="absolute inset-0 bg-white/50 dark:bg-black/50 flex items-center justify-center z-10">
+            <p className="font-bold text-lg">Generating Attack Graph...</p>
+          </div>
+        )}
       </div>
 
       <AttackNodeDrawer

@@ -19,14 +19,17 @@ const DEFAULT_CONFIGS = {
   wappalyzer: { enabled: true }
 };
 
-const ScannerConfigDrawer = ({ open, scannerId, onClose, onSave }: any) => {
-  const [config, setConfig] = useState(DEFAULT_CONFIGS[scannerId as keyof typeof DEFAULT_CONFIGS] || {});
+// FIX: Added currentConfig to props
+const ScannerConfigDrawer = ({ open, scannerId, currentConfig, onClose, onSave }: any) => {
+  const [config, setConfig] = useState({});
 
   useEffect(() => {
     if (scannerId) {
-      setConfig(DEFAULT_CONFIGS[scannerId as keyof typeof DEFAULT_CONFIGS]);
+      // FIX: Use the passed currentConfig if available, otherwise use default
+      const defaults = DEFAULT_CONFIGS[scannerId as keyof typeof DEFAULT_CONFIGS] || {};
+      setConfig(currentConfig || defaults);
     }
-  }, [scannerId]);
+  }, [scannerId, currentConfig]);
 
   const handleSave = () => {
     onSave(scannerId, config);

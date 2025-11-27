@@ -1,38 +1,47 @@
 import React from "react";
 import { Globe, Shield, Cloud, Server } from "lucide-react";
 
-const cards = [
-  {
-    label: "Total Assets",
-    value: "238",
-    icon: Server,
-    color: "text-blue-600",
-    subtitle: "All discovered devices",
-  },
-  {
-    label: "Internet Exposed",
-    value: "14",
-    icon: Globe,
-    color: "text-red-600",
-    subtitle: "Publicly reachable systems",
-  },
-  {
-    label: "High-Risk Assets",
-    value: "27",
-    icon: Shield,
-    color: "text-orange-500",
-    subtitle: "Based on vulnerabilities",
-  },
-  {
-    label: "Cloud Assets",
-    value: "62",
-    icon: Cloud,
-    color: "text-purple-600",
-    subtitle: "AWS / Azure / GCP",
-  },
-];
+interface Props {
+  stats: {
+    total: number;
+    exposed: number;
+    highRisk: number;
+    cloud: number;
+  };
+}
 
-const AssetSummaryCards = () => {
+const AssetSummaryCards = ({ stats }: Props) => {
+  const cards = [
+    {
+      label: "Total Assets",
+      value: stats?.total || 0,
+      icon: Server,
+      color: "text-blue-600",
+      subtitle: "All discovered devices",
+    },
+    {
+      label: "Internet Exposed",
+      value: stats?.exposed || 0,
+      icon: Globe,
+      color: "text-red-600",
+      subtitle: "Publicly reachable systems",
+    },
+    {
+      label: "High-Risk Assets",
+      value: stats?.highRisk || 0,
+      icon: Shield,
+      color: "text-orange-500",
+      subtitle: "Based on vulnerabilities",
+    },
+    {
+      label: "Cloud Assets",
+      value: stats?.cloud || 0,
+      icon: Cloud,
+      color: "text-purple-600",
+      subtitle: "AWS / Azure / GCP",
+    },
+  ];
+
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
       {cards.map((item, idx) => {

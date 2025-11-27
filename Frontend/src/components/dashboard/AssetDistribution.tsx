@@ -10,14 +10,19 @@ import {
   LabelList,
 } from "recharts";
 
-const data = [
-  { name: "Servers", count: 3247, color: "#3b82f6" },
-  { name: "Workstations", count: 4562, color: "#8b5cf6" },
-  { name: "Network Devices", count: 1823, color: "#0ea5e9" },
-  { name: "Cloud Assets", count: 2899, color: "#14b8a6" },
-];
+interface Props {
+  distribution: Record<string, number>;
+}
 
-const AssetDistribution = () => {
+const AssetDistribution = ({ distribution }: Props) => {
+  // Convert dictionary to array for Recharts
+  const data = Object.entries(distribution || {}).map(([name, count], index) => ({
+    name,
+    count,
+    // Assign colors cyclically
+    color: ["#3b82f6", "#8b5cf6", "#0ea5e9", "#14b8a6", "#f97316"][index % 5]
+  }));
+
   return (
     <div className="w-full h-full">
       <h3 className="text-lg font-semibold mb-4">Asset Distribution</h3>
@@ -31,11 +36,12 @@ const AssetDistribution = () => {
               dataKey="name"
               type="category"
               tick={{ fill: "#94a3b8" }}
+              width={100}
             />
             <Tooltip />
 
             <Bar dataKey="count" radius={8}>
-              <LabelList dataKey="count" position="right" fill="#ffffff" />
+              <LabelList dataKey="count" position="right" fill="#888" />
               {data.map((entry, index) => (
                 <rect key={index} fill={entry.color} />
               ))}

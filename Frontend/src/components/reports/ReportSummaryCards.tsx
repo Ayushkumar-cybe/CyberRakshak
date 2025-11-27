@@ -1,34 +1,43 @@
 import React from "react";
-import { FileText, Clock, CheckCircle2, CalendarClock } from "lucide-react";
+import { FileText, CheckCircle2, Clock, AlertCircle } from "lucide-react";
 
-const cards = [
-  {
-    title: "Total Reports",
-    value: 42,
-    icon: FileText,
-    color: "text-blue-600",
-  },
-  {
-    title: "Completed",
-    value: 29,
-    icon: CheckCircle2,
-    color: "text-green-600",
-  },
-  {
-    title: "Pending",
-    value: 8,
-    icon: Clock,
-    color: "text-yellow-600",
-  },
-  {
-    title: "Scheduled",
-    value: 5,
-    icon: CalendarClock,
-    color: "text-purple-600",
-  },
-];
+interface Props {
+  stats: {
+    total: number;
+    completed: number;
+    pending: number;
+    failed: number;
+  };
+}
 
-const ReportSummaryCards = () => {
+const ReportSummaryCards = ({ stats }: Props) => {
+  const cards = [
+    {
+      title: "Total Reports",
+      value: stats?.total || 0,
+      icon: FileText,
+      color: "text-blue-600",
+    },
+    {
+      title: "Completed",
+      value: stats?.completed || 0,
+      icon: CheckCircle2,
+      color: "text-green-600",
+    },
+    {
+      title: "Pending / Running",
+      value: stats?.pending || 0,
+      icon: Clock,
+      color: "text-yellow-600",
+    },
+    {
+      title: "Failed / Partial",
+      value: stats?.failed || 0,
+      icon: AlertCircle,
+      color: "text-red-600",
+    },
+  ];
+
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
       {cards.map((c, index) => (

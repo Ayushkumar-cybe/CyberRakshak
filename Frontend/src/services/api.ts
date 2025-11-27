@@ -28,9 +28,33 @@ interface DashboardStatsResponse {
   total_vulnerabilities: number;
   critical_findings: number;
   high_findings: number;
+  medium_findings: number; // <--- NEW
+  low_findings: number;    // <--- NEW
   asset_criticality_score: number;
   open_ports_detected: number;
   unified_cyber_score: number;
+  total_assets: number;
+  internet_exposed: number;
+  high_risk_assets: number;
+  cloud_assets: number;
+  asset_distribution: Record<string, number>;
+}
+
+interface ThreatIntelSummaryResponse {
+  total_cve_tracked: number;
+  cisa_kev_tracked: number;
+  exploits_available: number;
+  most_recent_sync: string;
+}
+
+interface VulnerabilityMetadata {
+    cve_id: string;
+    description: string;
+    cvss_score: number;
+    severity: string;
+    is_cisa_kev: boolean;
+    has_exploit: boolean;
+    last_updated: string;
 }
 
 interface AssetResponse {
@@ -49,6 +73,7 @@ interface VulnerabilityResponse {
   id: string;
   cve: string;
   title: string;
+  description?: string;
   severity: string;
   cvss: number;
   asset: string;
@@ -62,6 +87,13 @@ interface JobHistoryResponse {
   status: string;
   created_at: string;
   scanners_used: string[];
+}
+
+interface ReportStatsResponse {
+  total: number;
+  completed: number;
+  pending: number;
+  failed: number;
 }
 
 interface ReportResponse {
@@ -201,3 +233,15 @@ export async function* streamChatResponse(message: string): AsyncGenerator<strin
     reader.releaseLock();
   }
 }
+
+export const getThreatIntelSummary = async (): Promise<ThreatIntelSummaryResponse> => {
+  return apiCall<ThreatIntelSummaryResponse>("/threat-intel/summary", "GET");
+};
+
+export const getThreatIntelFeed = async (skip: number = 0, limit: number = 50): Promise<VulnerabilityMetadata[]> => {
+  return apiCall<VulnerabilityMetadata[]>(`/threat-intel/feed?skip=${skip}&limit=${limit}`, "GET");
+};
+
+export const getReportStats = async (): Promise<ReportStatsResponse> => {
+  return apiCall<ReportStatsResponse>('/reports/stats');
+};

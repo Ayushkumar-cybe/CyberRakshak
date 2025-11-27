@@ -1,9 +1,13 @@
 import React, { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import AttackFilters from "../components/attack/AttackFilters";
 import AttackGraph from "../components/attack/AttackGraph";
 
 const AttackPath = () => {
   const [filters, setFilters] = useState({});
+  // Hook to read the URL query parameters
+  const [searchParams] = useSearchParams(); 
+  const initialJobId = searchParams.get("job_id") || "";
 
   return (
     <div className="space-y-6">
@@ -23,7 +27,8 @@ const AttackPath = () => {
 
       {/* Graph Area */}
       <div className="bg-white dark:bg-slate-800 rounded-xl shadow p-4 min-h-[600px] border border-slate-200 dark:border-slate-700">
-        <AttackGraph />
+        {/* Pass the ID from URL to the graph component */}
+        <AttackGraph initialJobId={initialJobId} />
       </div>
 
     </div>

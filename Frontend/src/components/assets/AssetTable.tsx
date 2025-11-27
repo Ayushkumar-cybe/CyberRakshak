@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { Server, Cloud, Network, Monitor } from "lucide-react";
+import { Server, Cloud, Network, Monitor, HelpCircle } from "lucide-react"; // Added HelpCircle
 import AssetDrawer from "./AssetDrawer";
-// Import the API service
 import { getAssets } from "../../services/api";
 
 const exposureColors: Record<string, string> = {
@@ -27,6 +26,7 @@ const osIcons: Record<string, any> = {
   Linux: Server,
   Windows: Monitor,
   macOS: Monitor,
+  Unknown: HelpCircle, // Added explicit Unknown handler
 };
 
 const AssetTable = () => {
@@ -41,14 +41,13 @@ const AssetTable = () => {
     const fetchAssets = async () => {
       try {
         const data = await getAssets(0, 100);
-        // Transform the data to match the existing structure
         const transformedData = data.map((asset: any) => ({
           name: asset.name,
           ip: asset.ip,
-          os: asset.os,
+          os: asset.os || "Unknown", // Ensure OS is never null
           exposure: asset.exposure,
           risk: asset.risk,
-          cloud: asset.cloud,
+          cloud: asset.cloud || "On-Prem",
           discoveredBy: asset.discovered_by,
           date: asset.last_seen,
         }));
@@ -115,8 +114,9 @@ const AssetTable = () => {
 
         <tbody>
           {sorted.map((row, i) => {
-            const OsIcon = osIcons[row.os];
-            const CloudIcon = cloudIcons[row.cloud];
+            // FIX: Use fallback icons if the key is missing
+            const OsIcon = osIcons[row.os] || HelpCircle;
+            const CloudIcon = cloudIcons[row.cloud] || Network;
 
             return (
               <tr
@@ -136,7 +136,7 @@ const AssetTable = () => {
                 {/* Exposure */}
                 <td className="p-3">
                   <span
-                    className={`px-2 py-1 text-xs text-white rounded-full ${exposureColors[row.exposure]}`}
+                    className={`px-2 py-1 text-xs text-white rounded-full ${exposureColors[row.exposure] || "bg-gray-500"}`}
                   >
                     {row.exposure}
                   </span>
@@ -145,7 +145,7 @@ const AssetTable = () => {
                 {/* Risk */}
                 <td className="p-3">
                   <span
-                    className={`px-2 py-1 text-xs text-white rounded-full ${riskColors[row.risk]}`}
+                    className={`px-2 py-1 text-xs text-white rounded-full ${riskColors[row.risk] || "bg-gray-500"}`}
                   >
                     {row.risk}
                   </span>

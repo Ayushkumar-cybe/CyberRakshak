@@ -17,3 +17,4 @@ pydantic-settings # For managing config
 requests
 networkx
 fpdf2
+numpy
