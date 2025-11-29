@@ -7,14 +7,20 @@ celery
 eventlet
 amqp     # RabbitMQ transport
 
-# Database (as per your plan)
-sqlmodel    # Combines SQLAlchemy and Pydantic
-psycopg2-binary # Postgres driver
+# Database
+sqlmodel
+psycopg2-binary
 
 # Utilities
-python-dotenv  # To read .env files
-pydantic-settings # For managing config
+python-dotenv
+pydantic-settings
 requests
 networkx
 fpdf2
 numpy
+
+# --- SECURITY ---
+passlib
+bcrypt==3.2.2
+python-jose[cryptography]
+python-multipart

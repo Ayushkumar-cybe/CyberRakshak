@@ -1,19 +1,22 @@
 import uuid
 import os
 import ipaddress
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.security import OAuth2PasswordRequestForm # <--- Security Import
 from sqlmodel import Session, select
 from app.database import get_session
-from app.models import Job, JobStatus, AuditLog, VulnerabilityMetadata
+from app.models import Job, JobStatus, AuditLog, VulnerabilityMetadata, User
 from app.worker.tasks import run_scan_task
 from app.graph import build_attack_graph
 from app.reporting import generate_pdf_report
 from app.chat_assistant import chat_assistant_service
-from pydantic import BaseModel
+from app.auth import create_access_token, get_current_user, verify_password # <--- Auth Import
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Union, Literal
 import asyncio
+from datetime import datetime
 
 # === Configuration Models ===
 class NmapConfig(BaseModel):
@@ -150,15 +153,37 @@ class ThreatIntelSummaryResponse(BaseModel):
 
 router = APIRouter(prefix="/api", tags=["Scans"])
 
+# --- HELPER ---
 def is_private_ip(ip: str) -> bool:
     try:
         return ipaddress.ip_address(ip).is_private
     except ValueError:
         return False 
 
+# --- AUTHENTICATION ENDPOINT ---
+@router.post("/auth/token")
+def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), session: Session = Depends(get_session)):
+    user = session.exec(select(User).where(User.username == form_data.username)).first()
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token = create_access_token(data={"sub": user.username})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+# --- PROTECTED ROUTES ---
+
 @router.post("/scan/start", response_model=ScanStartResponse)
-def start_scan(request: ScanStartRequest, session: Session = Depends(get_session)):
+def start_scan(
+    request: ScanStartRequest, 
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user) # <--- Protected
+):
     worker_config = {}
+    
     selected_scanners = []
     if not request.scanners:
         selected_scanners = ["nmap", "nuclei", "nikto", "zap", "wappalyzer", "metasploit", "openvas"]
@@ -185,7 +210,7 @@ def start_scan(request: ScanStartRequest, session: Session = Depends(get_session
     session.commit()
     session.refresh(new_job)
     
-    audit = AuditLog(event_type="SCAN_STARTED", details={"target": request.target, "scanners": selected_scanners}, job_id=new_job.id)
+    audit = AuditLog(event_type="SCAN_STARTED", details={"target": request.target, "scanners": selected_scanners, "user": user.username}, job_id=new_job.id)
     session.add(audit)
     session.commit()
 
@@ -196,7 +221,11 @@ def start_scan(request: ScanStartRequest, session: Session = Depends(get_session
     )
 
 @router.get("/scan/status/{job_id}", response_model=ScanStatusResponse)
-def get_scan_status(job_id: uuid.UUID, session: Session = Depends(get_session)):
+def get_scan_status(
+    job_id: uuid.UUID, 
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user) # <--- Protected
+):
     job = session.get(Job, job_id)
     if not job: raise HTTPException(status_code=404, detail="Job not found")
     return ScanStatusResponse(
@@ -205,30 +234,50 @@ def get_scan_status(job_id: uuid.UUID, session: Session = Depends(get_session)):
     )
 
 @router.get("/scan/logs", tags=["Audit"])
-def get_audit_logs(limit: int = 50, session: Session = Depends(get_session)):
+def get_audit_logs(
+    limit: int = 50, 
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user) # <--- Protected
+):
     return session.exec(select(AuditLog).order_by(AuditLog.timestamp.desc()).limit(limit)).all()
 
 @router.get("/scan/graph/{job_id}")
-def get_scan_graph(job_id: uuid.UUID, session: Session = Depends(get_session)):
+def get_scan_graph(
+    job_id: uuid.UUID, 
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user) # <--- Protected
+):
     job = session.get(Job, job_id)
     if not job: raise HTTPException(status_code=404, detail="Job not found")
     if not job.normalized_report: return {"nodes": [], "edges": []}
     return build_attack_graph(job.normalized_report)
 
+# === CHAT ASSISTANT ENDPOINTS ===
 @router.post("/chat/message", response_model=ChatMessageResponse)
-async def send_chat_message(request: ChatMessageRequest):
+async def send_chat_message(
+    request: ChatMessageRequest,
+    user: User = Depends(get_current_user) # <--- Protected
+):
     response = await chat_assistant_service.get_response_async(request.message)
     return ChatMessageResponse(response=response)
 
 @router.post("/chat/stream")
-async def stream_chat_response(request: ChatMessageRequest):
+async def stream_chat_response(
+    request: ChatMessageRequest,
+    user: User = Depends(get_current_user) # <--- Protected
+):
     chunks = await chat_assistant_service.stream_response(request.message)
     for chunk in chunks:
         await asyncio.sleep(0.01) 
         yield chunk
 
+# === DATA ENDPOINTS ===
+
 @router.get("/dashboard/stats", response_model=DashboardStatsResponse)
-def get_dashboard_stats(session: Session = Depends(get_session)):
+def get_dashboard_stats(
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user) # <--- Protected
+):
     jobs = session.exec(select(Job).where(Job.status == JobStatus.COMPLETED)).all()
     total_vulns = 0; critical = 0; high = 0; medium = 0; low = 0; open_ports = 0
     unique_assets = {}
@@ -273,9 +322,12 @@ def get_dashboard_stats(session: Session = Depends(get_session)):
         cloud_assets=0, asset_distribution=dist
     )
 
-# --- ASSETS ENDPOINT (FIXED) ---
 @router.get("/assets", response_model=List[AssetResponse])
-def get_assets(skip: int = 0, limit: int = 100, session: Session = Depends(get_session)):
+def get_assets(
+    skip: int = 0, limit: int = 100, 
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user) # <--- Protected
+):
     jobs = session.exec(select(Job).where(Job.status == JobStatus.COMPLETED).order_by(Job.created_at.desc())).all()
     assets_map = {} 
 
@@ -302,14 +354,17 @@ def get_assets(skip: int = 0, limit: int = 100, session: Session = Depends(get_s
             assets_map[asset_id] = AssetResponse(
                 id=uuid.UUID(asset_id), name=name, ip=ip, os="Unknown",
                 exposure=exposure, risk=risk, cloud="On-Prem",
-                discovered_by="Nmap", last_seen=str(job.created_at)[:10]
+                discovered_by="Scanner", last_seen=str(job.created_at)[:10]
             )
 
     return list(assets_map.values())[skip : skip + limit]
-# -------------------------------
 
 @router.get("/vulnerabilities", response_model=List[VulnerabilityResponse])
-def get_vulnerabilities(skip: int = 0, limit: int = 100, session: Session = Depends(get_session)):
+def get_vulnerabilities(
+    skip: int = 0, limit: int = 100, 
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user) # <--- Protected
+):
     jobs = session.exec(select(Job).where(Job.status == JobStatus.COMPLETED).order_by(Job.created_at.desc())).all()
     all_vulns = []
     
@@ -351,7 +406,11 @@ def get_vulnerabilities(skip: int = 0, limit: int = 100, session: Session = Depe
     return all_vulns[skip : skip + limit]
 
 @router.get("/jobs", response_model=List[JobHistoryResponse])
-def get_job_history(skip: int = 0, limit: int = 100, session: Session = Depends(get_session)):
+def get_job_history(
+    skip: int = 0, limit: int = 100, 
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user) # <--- Protected
+):
     jobs = session.exec(select(Job).order_by(Job.created_at.desc()).offset(skip).limit(limit)).all()
     return [
         JobHistoryResponse(
@@ -362,7 +421,11 @@ def get_job_history(skip: int = 0, limit: int = 100, session: Session = Depends(
     ]
 
 @router.get("/reports", response_model=List[ReportResponse])
-def get_reports(skip: int = 0, limit: int = 100, session: Session = Depends(get_session)):
+def get_reports(
+    skip: int = 0, limit: int = 100, 
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user) # <--- Protected
+):
     jobs = session.exec(select(Job).where(Job.status == JobStatus.COMPLETED).order_by(Job.created_at.desc()).offset(skip).limit(limit)).all()
     return [
         ReportResponse(
@@ -373,7 +436,10 @@ def get_reports(skip: int = 0, limit: int = 100, session: Session = Depends(get_
     ]
 
 @router.get("/reports/stats", response_model=ReportStatsResponse)
-def get_report_stats(session: Session = Depends(get_session)):
+def get_report_stats(
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user) # <--- Protected
+):
     total = session.exec(select(Job)).all()
     completed = [j for j in total if j.status == JobStatus.COMPLETED]
     pending = [j for j in total if j.status in [JobStatus.PENDING, JobStatus.RUNNING]]
@@ -385,7 +451,10 @@ def get_report_stats(session: Session = Depends(get_session)):
     )
 
 @router.get("/threat-intel/summary", response_model=ThreatIntelSummaryResponse)
-def get_threat_intel_summary(session: Session = Depends(get_session)):
+def get_threat_intel_summary(
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user) # <--- Protected
+):
     total_cve = len(session.exec(select(VulnerabilityMetadata)).all())
     cisa_kev_count = len(session.exec(select(VulnerabilityMetadata).where(VulnerabilityMetadata.is_cisa_kev == True)).all())
     exploits_available = len(session.exec(select(VulnerabilityMetadata).where(VulnerabilityMetadata.has_exploit == True)).all())
@@ -398,7 +467,11 @@ def get_threat_intel_summary(session: Session = Depends(get_session)):
     )
 
 @router.get("/threat-intel/feed", response_model=List[VulnerabilityMetadata])
-def get_threat_intel_feed(skip: int = 0, limit: int = 50, session: Session = Depends(get_session)):
+def get_threat_intel_feed(
+    skip: int = 0, limit: int = 50, 
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user) # <--- Protected
+):
     return session.exec(select(VulnerabilityMetadata).order_by(VulnerabilityMetadata.last_updated.desc()).offset(skip).limit(limit)).all()
 
 def remove_file(path: str):
@@ -409,7 +482,8 @@ def remove_file(path: str):
 def get_scan_report_pdf(
     job_id: uuid.UUID,
     background_tasks: BackgroundTasks,
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user) # <--- Protected
 ):
     job = session.get(Job, job_id)
     if not job: raise HTTPException(status_code=404, detail="Job not found")
