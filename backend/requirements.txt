@@ -18,6 +18,8 @@ requests
 networkx
 fpdf2
 numpy
+redis
+fastapi-cache2[redis]
 
 # --- SECURITY ---
 passlib

@@ -30,16 +30,28 @@ services:
       timeout: 10s
       retries: 5
 
+  # --- Redis for Caching ---
+  redis:
+    image: redis:7-alpine
+    container_name: sih-redis
+    ports:
+      - "6379:6379"
+    restart: always
+    volumes:
+      - redis_data:/data
+  # -------------------------
+
   backend:
     build:
       context: ./backend  # <--- CHANGED: Point to backend dir
-      dockerfile: Dockerfile.api # <--- CHANGED: Relative to context
+      dockerfile: Dockerfile.api
     container_name: sih-backend
     ports:
       - "8000:8000"
     environment:
       DATABASE_URL: "postgresql://postgres:mysecretpassword@postgres:5432/sih_db"
       RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672//"
+      REDIS_URL: "redis://redis:6379"
     volumes:
       - ./backend:/app
     depends_on:
@@ -47,27 +59,31 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      redis:
+        condition: service_started
     restart: always
 
   celery-worker:
     build:
       context: ./backend # <--- CHANGED
-      dockerfile: Dockerfile.worker # <--- CHANGED
+      dockerfile: Dockerfile.worker
     container_name: sih-celery-worker
     environment:
       DOCKER_ENV: "true" 
       DATABASE_URL: "postgresql://postgres:mysecretpassword@postgres:5432/sih_db"
       RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672//"
-      HOST_PROJECT_PATH: "${PWD}" 
+      HOST_PROJECT_PATH: "${PWD}/backend" 
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./outputs:/app/outputs
+      - ./backend/outputs:/app/outputs
       - ./backend:/app
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      redis:
+        condition: service_started
     restart: always
 
   frontend:
@@ -84,27 +100,24 @@ services:
     depends_on:
       - backend
 
-  # Builder for Wappalyzer
   wappalyzer:
     build:
       context: ./backend # <--- CHANGED
-      dockerfile: Dockerfile.wappalyzer # <--- CHANGED
+      dockerfile: Dockerfile.wappalyzer
     image: local/wappalyzer
     container_name: sih-wappalyzer-builder
     entrypoint: ["echo", "Wappalyzer image built and ready."]
     restart: "no"
 
-  # Builder for GVM Tools
   gvm-tools:
     build:
       context: ./backend # <--- CHANGED
-      dockerfile: Dockerfile.gvm-tools # <--- CHANGED
+      dockerfile: Dockerfile.gvm-tools
     image: local/gvm-tools
     container_name: sih-gvm-tools-builder
     entrypoint: ["echo", "GVM Tools image built."]
     restart: "no"
 
-  # Cache for Metasploit
   metasploit:
     image: metasploitframework/metasploit-framework
     container_name: sih-metasploit-cache
@@ -113,3 +126,4 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:

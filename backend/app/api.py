@@ -1,6 +1,7 @@
 import uuid
 import os
 import ipaddress
+from fastapi_cache.decorator import cache
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -274,6 +275,7 @@ async def stream_chat_response(
 # === DATA ENDPOINTS ===
 
 @router.get("/dashboard/stats", response_model=DashboardStatsResponse)
+@cache(expire=60)
 def get_dashboard_stats(
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user) # <--- Protected
@@ -323,6 +325,7 @@ def get_dashboard_stats(
     )
 
 @router.get("/assets", response_model=List[AssetResponse])
+@cache(expire=60)
 def get_assets(
     skip: int = 0, limit: int = 100, 
     session: Session = Depends(get_session),
@@ -360,6 +363,7 @@ def get_assets(
     return list(assets_map.values())[skip : skip + limit]
 
 @router.get("/vulnerabilities", response_model=List[VulnerabilityResponse])
+@cache(expire=60)
 def get_vulnerabilities(
     skip: int = 0, limit: int = 100, 
     session: Session = Depends(get_session),
