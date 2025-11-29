@@ -62,19 +62,23 @@ def parse_nuclei(file_path: str) -> List[Dict[str, Any]]:
                     data = json.loads(line)
                     info = data.get("info", {})
                     
-                    # Extract Classification for CVSS
+                    # --- ENRICHMENT FIX: Extract CVE & Score ---
                     classification = info.get("classification", {})
+                    cve_list = classification.get("cve-id", [])
+                    # Nuclei can return a list or null. Handle both.
+                    cve_id = cve_list[0] if cve_list and isinstance(cve_list, list) else None
+                    
                     cvss_score = classification.get("cvss-score")
+                    # -------------------------------------------
 
                     vuln = {
                         "tool": "nuclei",
                         "title": info.get("name", "Unknown Vulnerability"),
                         "severity": info.get("severity", "info"),
                         "description": info.get("description", ""),
-                        "cvss_score": cvss_score, # <--- Added this
-                        "matcher_name": data.get("matcher-name"),
+                        "cve": cve_id,          # Captured CVE
+                        "cvss_score": cvss_score, # Captured Score
                         "template_id": data.get("template-id"),
-                        "matched_at": data.get("matched-at"),
                         "ip": data.get("ip"),
                         "port": data.get("port"),
                         "references": info.get("reference", [])
@@ -91,6 +95,7 @@ def parse_nikto(file_path: str) -> List[Dict[str, Any]]:
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
+            # Nikto structure varies (list vs dict)
             if isinstance(data, list):
                 for host_data in data:
                     for item in host_data.get("vulnerabilities", []):

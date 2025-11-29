@@ -17,18 +17,12 @@ def clean_text(text: str) -> str:
     """Sanitizes text for FPDF (Latin-1 encoding)"""
     if not text: return ""
     replacements = {
-        '\u2013': '-',  # En dash
-        '\u2014': '-',  # Em dash
-        '\u2018': "'",  # Left single quote
-        '\u2019': "'",  # Right single quote
-        '\u201c': '"',  # Left double quote
-        '\u201d': '"',  # Right double quote
-        '\u2026': '...', # Ellipsis
+        '\u2013': '-', '\u2014': '-', '\u2018': "'", '\u2019': "'",
+        '\u201c': '"', '\u201d': '"', '\u2026': '...'
     }
     for char, replacement in replacements.items():
         text = text.replace(char, replacement)
     
-    # Encode to latin-1, ignoring errors to prevent crash
     return text.encode('latin-1', 'ignore').decode('latin-1')
 
 def generate_pdf_report(job_data: dict, filename: str):
@@ -111,12 +105,34 @@ def generate_pdf_report(job_data: dict, filename: str):
             else:
                 pdf.set_text_color(0, 0, 0)
                 
-            pdf.cell(0, 8, f"[{severity}] {title} ({tool})", 0, 1)
+            # Title Row (wrapped)
+            # Ensure we are at the left margin
+            pdf.set_x(10) 
+            pdf.multi_cell(0, 6, f"[{severity}] {title} ({tool})")
+            
             pdf.set_text_color(0, 0, 0)
+            
+            # --- FIX: Combined Enrichment Details Row ---
+            cve = clean_text(v.get('cve') or v.get('enrichment', {}).get('cve_id') or 'N/A')
+            cvss = str(v.get('cvss_score') or v.get('enrichment', {}).get('nvd_data', {}).get('score') or 'N/A')
+            
+            # Build a single info string
+            info_text = f"CVE: {cve}   |   CVSS: {cvss}"
+            
+            if v.get('enrichment', {}).get('cisa_kev'):
+                 info_text += "   |   [CISA KEV ALERT]"
+                 pdf.set_text_color(200, 0, 0)
+
+            pdf.set_font("Arial", "B", 9)
+            pdf.set_x(10) # Force reset X to margin
+            pdf.multi_cell(0, 6, info_text) # Use multi_cell to handle long lines/wrapping
+            pdf.set_text_color(0, 0, 0)
+            # -------------------------------
             
             pdf.set_font("Arial", "", 10)
             desc = clean_text(v.get('description', 'No description provided.'))
             desc = desc.replace('<p>', '').replace('</p>', '\n').strip()
+            pdf.set_x(10) # Force reset X
             pdf.multi_cell(0, 5, desc)
             pdf.ln(5)
 
