@@ -103,7 +103,14 @@ const ScanHistory = () => {
                     >
                       Graph
                     </a>
-                  </td>
+                  {/* --- NEW BUTTON --- */}
+                    <a 
+                      href={`/remediation?job_id=${item.job_id}`}
+                      className="px-3 py-1 text-xs bg-green-600 text-white rounded-md hover:bg-green-700 inline-block"
+                    >
+                      Fix
+                    </a>
+		  </td>
                 </tr>
               ))
             )}

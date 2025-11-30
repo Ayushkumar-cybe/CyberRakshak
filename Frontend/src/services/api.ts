@@ -40,6 +40,15 @@ interface DashboardStatsResponse {
   asset_distribution: Record<string, number>;
 }
 
+export interface RemediationStep {
+  cve: string;
+  title: string;
+  severity: string;
+  asset: string;
+  action: string;
+  source: string;
+}
+
 interface ThreatIntelSummaryResponse {
   total_cve_tracked: number;
   cisa_kev_tracked: number;
@@ -244,4 +253,8 @@ export const getThreatIntelFeed = async (skip: number = 0, limit: number = 50): 
 
 export const getReportStats = async (): Promise<ReportStatsResponse> => {
   return apiCall<ReportStatsResponse>('/reports/stats');
+};
+
+export const getRemediationPlan = async (jobId: string): Promise<RemediationStep[]> => {
+  return apiCall<RemediationStep[]>(`/remediation/${jobId}`);
 };

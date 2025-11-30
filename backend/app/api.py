@@ -14,10 +14,13 @@ from app.graph import build_attack_graph
 from app.reporting import generate_pdf_report
 from app.chat_assistant import chat_assistant_service
 from app.auth import create_access_token, get_current_user, verify_password # <--- Auth Import
+from app.remediation import get_remediation
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Union, Literal
 import asyncio
 from datetime import datetime
+from app.remediation import get_remediation
+
 
 # === Configuration Models ===
 class NmapConfig(BaseModel):
@@ -501,3 +504,68 @@ def get_scan_report_pdf(
     
     background_tasks.add_task(remove_file, file_path)
     return FileResponse(path=file_path, filename=filename, media_type='application/pdf')
+
+@router.get("/remediation/{job_id}")
+def get_remediation_plan(
+    job_id: uuid.UUID, 
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user)
+):
+    job = session.get(Job, job_id)
+    if not job or not job.normalized_report:
+        raise HTTPException(status_code=404, detail="Job or report not found")
+
+    vulns = job.normalized_report.get("vulnerabilities", [])
+    remediation_plan = []
+
+    for v in vulns:
+        # Skip Info/Low if you want to focus on real threats
+        if v.get("severity", "").lower() == "info": continue
+
+        fix = get_remediation(v)
+        remediation_plan.append({
+            "cve": v.get("cve") or v.get("enrichment", {}).get("cve_id") or "N/A",
+            "title": v.get("title"),
+            "severity": v.get("severity"),
+            "asset": v.get("asset") or job.target,
+            "action": fix["action"],
+            "source": fix["source"]
+        })
+        
+    # Sort by Severity (Critical first)
+    severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    remediation_plan.sort(key=lambda x: severity_order.get(x["severity"].lower(), 4))
+
+    return remediation_plan
+
+@router.get("/remediation/{job_id}")
+def get_remediation_plan(
+    job_id: uuid.UUID, 
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user)
+):
+    job = session.get(Job, job_id)
+    if not job or not job.normalized_report:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    vulns = job.normalized_report.get("vulnerabilities", [])
+    remediation_plan = []
+
+    for v in vulns:
+        if v.get("severity", "").lower() == "info": continue
+
+        fix = get_remediation(v)
+        remediation_plan.append({
+            "cve": v.get("cve") or v.get("enrichment", {}).get("cve_id") or "N/A",
+            "title": v.get("title"),
+            "severity": v.get("severity"),
+            "asset": v.get("asset") or job.target,
+            "action": fix["action"],
+            "source": fix["source"]
+        })
+        
+    # Sort Critical first
+    severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    remediation_plan.sort(key=lambda x: severity_order.get(x["severity"].lower(), 4))
+
+    return remediation_plan

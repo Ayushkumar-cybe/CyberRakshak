@@ -111,19 +111,34 @@ def enrich_vulnerability(vuln: Dict[str, Any], cisa_cache: Dict[str, Any]) -> Di
                 "vector": cached_vuln.vector_string,
                 "description": cached_vuln.description
             }
+            # Inject cached remediation if available
+            if cached_vuln.remediation:
+                vuln["remediation"] = cached_vuln.remediation
+                vuln["remediation_source"] = cached_vuln.remediation_source
+
         else:
             # MISS: Fetch from NVD API
             print(f"Fetching NVD data for {cve_id}...")
             nvd_info = fetch_nvd_data(cve_id)
             
             if nvd_info:
+                # Determine Remediation (Priority: CISA -> Default)
+                rem_text = None
+                rem_source = None
+                
+                if enrichment_data["cisa_kev"]:
+                    rem_text = enrichment_data["cisa_details"].get("required_action")
+                    rem_source = "CISA KEV"
+                
                 new_meta = VulnerabilityMetadata(
                     cve_id=cve_id,
                     description=nvd_info["description"],
                     cvss_score=nvd_info["cvss_score"],
                     severity=nvd_info["severity"],
                     vector_string=nvd_info["vector_string"],
-                    is_cisa_kev=enrichment_data["cisa_kev"]
+                    is_cisa_kev=enrichment_data["cisa_kev"],
+                    remediation=rem_text,         # <--- Save it
+                    remediation_source=rem_source # <--- Save it
                 )
                 session.add(new_meta)
                 session.commit()

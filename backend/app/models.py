@@ -49,3 +49,5 @@ class VulnerabilityMetadata(SQLModel, table=True):
     has_exploit: bool = Field(default=False)
     exploit_ids: List[str] = Field(default=[], sa_column=Column(JSON))
     last_updated: datetime = Field(default_factory=datetime.utcnow)
+    remediation: Optional[str] = None
+    remediation_source: Optional[str] = None
