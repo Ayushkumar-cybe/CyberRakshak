@@ -4,8 +4,9 @@ import ipaddress
 from fastapi_cache.decorator import cache
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.security import OAuth2PasswordRequestForm # <--- Security Import
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlmodel import Session, select
 from app.database import get_session
 from app.models import Job, JobStatus, AuditLog, VulnerabilityMetadata, User
@@ -268,12 +269,15 @@ async def send_chat_message(
 @router.post("/chat/stream")
 async def stream_chat_response(
     request: ChatMessageRequest,
-    user: User = Depends(get_current_user) # <--- Protected
+    user: User = Depends(get_current_user)
 ):
-    chunks = await chat_assistant_service.stream_response(request.message)
-    for chunk in chunks:
-        await asyncio.sleep(0.01) 
-        yield chunk
+    async def event_generator():
+        # The service returns an async generator, we iterate and yield bytes
+        async for chunk in chat_assistant_service.stream_response(request.message):
+            yield chunk
+            await asyncio.sleep(0.01)
+
+    return StreamingResponse(event_generator(), media_type="text/plain")
 
 # === DATA ENDPOINTS ===
 

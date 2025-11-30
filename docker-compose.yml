@@ -49,12 +49,17 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: "postgresql://postgres:mysecretpassword@postgres:5432/sih_db"
-      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672//"
-      REDIS_URL: "redis://redis:6379"
+      - DATABASE_URL=postgresql://postgres:mysecretpassword@postgres:5432/sih_db
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672//
+      - REDIS_URL=redis://redis:6379
+      - QDRANT_URL=http://qdrant:6333
+      - GEMINI_API_KEY=AIzaSyBfqflb-Z9ND6aGCzYZBVfzptg9_DHLSuE
+      - GEMINI_MODEL=gemini-2.5-flash
     volumes:
       - ./backend:/app
     depends_on:
+      qdrant:
+        condition: service_started
       postgres:
         condition: service_healthy
       rabbitmq:
@@ -124,6 +129,15 @@ services:
     entrypoint: ["echo", "Metasploit image pulled."]
     restart: "no"
 
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: sih-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: always
 volumes:
   postgres_data:
   redis_data:
+  qdrant_data:

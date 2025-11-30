@@ -1,91 +1,93 @@
-"""
-Chat Assistant Service for CyberRakshak
-This service handles the AI chat functionality for the application.
-"""
-
-from typing import Dict, List, Any, Optional
-import asyncio
 import logging
+import asyncio
+from typing import AsyncGenerator, List, Dict, Any
+from app.utils.gemini_client import generate_gemini_response
+from app.models import Job
+from sqlmodel import Session, select
+from app.database import engine
 
 logger = logging.getLogger(__name__)
 
 class ChatAssistantService:
-    """Service to handle chat assistant functionality"""
-    
     def __init__(self):
-        # Predefined responses for common queries
-        self.responses = {
-            'hello': 'Hello! I am CyberRakshak AI. How can I assist you with cybersecurity today?',
-            'hi': 'Hi there! I\'m here to help you with cybersecurity insights. What would you like to know?',
-            'help': 'I can help you with:\n- Vulnerability analysis\n- Attack path visualization\n- Security recommendations\n- CVE details\n- Scan result interpretation\n\nWhat specific cybersecurity topic would you like assistance with?',
-            'what can you do': 'I can help you with:\n- Vulnerability analysis\n- Attack path visualization\n- Security recommendations\n- CVE details\n- Scan result interpretation\n\nWhat specific cybersecurity topic would you like assistance with?',
-            'scan results': 'I can help interpret your scan results. Please share the specific findings you\'d like me to analyze.',
-            'vulnerability': 'I can provide detailed information about vulnerabilities. Please specify which vulnerability or CVE you\'re interested in.',
-            'cve': 'I can provide detailed information about CVEs. Please share the specific CVE identifier you\'d like to know more about.',
-            'attack path': 'Attack path analysis helps identify potential routes attackers could take to compromise your systems. Please share your scan results for a detailed analysis.',
-        }
+        self.system_prompt = """
+        You are Cyra, an expert cybersecurity assistant for the CyberRakshak platform.
+        You have access to the user's latest vulnerability scan reports below.
         
-        # Default response for unrecognized queries
-        self.default_response = "I'm CyberRakshak AI, your cybersecurity assistant. I can help with vulnerability analysis, attack path visualization, security recommendations, and interpreting scan results. How can I assist you today?"
+        Rules:
+        1. **Greeting Protocol:** If the user simply says "hello", "hi", or greets you, DO NOT list the vulnerabilities immediately. Instead, introduce yourself, mention the target of the latest scan, and ask if they would like a summary or remediation advice.
+        2. **Context Awareness:** Answer questions strictly based on the provided scan context.
+        3. **Prioritization:** When asked for a summary, prioritize Critical and High severity vulnerabilities first.
+        4. **Actionable Advice:** Provide specific commands (e.g., Nginx/Apache config) when asked for remediation.
+        5. **Unknowns:** If the user asks about something not in the scan, say "I don't see that in your latest scan results."
+        6. **Tone:** Be professional, concise, and encouraging.
+        """
 
-    def get_response(self, message: str) -> str:
-        """
-        Get a response for the given message.
-        
-        Args:
-            message (str): The user's message
-            
-        Returns:
-            str: The assistant's response
-        """
-        # Convert to lowercase for case-insensitive matching
-        lower_message = message.lower().strip()
-        
-        # Check for exact matches
-        if lower_message in self.responses:
-            return self.responses[lower_message]
-            
-        # Check for partial matches
-        for key, response in self.responses.items():
-            if key in lower_message:
-                return response
+    def _get_latest_scan_context(self) -> str:
+        """Fetches the most recent completed scan report from the DB."""
+        try:
+            with Session(engine) as session:
+                # Get latest completed job
+                job = session.exec(select(Job).where(Job.status == "completed").order_by(Job.created_at.desc()).limit(1)).first()
                 
-        # Return default response if no match found
-        return self.default_response
+                if not job or not job.normalized_report:
+                    return "No scan data available yet. Tell the user to run a scan first."
+                
+                report = job.normalized_report
+                vulns = report.get("vulnerabilities", [])
+                
+                # Summarize for the AI (Token efficiency)
+                summary = [f"Target: {job.target}"]
+                
+                ports = report.get('ports', [])
+                if ports:
+                    summary.append(f"Open Ports: {', '.join([str(p.get('port')) for p in ports])}")
+                
+                if not vulns:
+                    summary.append("No vulnerabilities found.")
+                else:
+                    summary.append(f"Found {len(vulns)} vulnerabilities. Top findings:")
+                    # Limit context size to avoid token limits
+                    for v in vulns[:20]: 
+                        title = v.get('title', 'Unknown')
+                        severity = v.get('severity', 'Info')
+                        cve = v.get('cve') or "N/A"
+                        summary.append(f"- [{severity}] {title} (CVE: {cve})")
+                
+                return "\n".join(summary)
+        except Exception as e:
+            logger.error(f"Context retrieval failed: {e}")
+            return "Error retrieving scan data from database."
 
-    async def get_response_async(self, message: str) -> str:
-        """
-        Get a response for the given message asynchronously.
-        Simulates processing delay.
+    async def get_response_async(self, user_message: str) -> str:
+        """Generates a response using Gemini + Local Scan Context."""
+        # 1. Retrieve Context
+        scan_context = self._get_latest_scan_context()
         
-        Args:
-            message (str): The user's message
-            
-        Returns:
-            str: The assistant's response
+        # 2. Construct Prompt
+        full_prompt = f"""
+        {self.system_prompt}
+        
+        === LATEST SCAN CONTEXT ===
+        {scan_context}
+        ===========================
+        
+        User Query: {user_message}
         """
-        # Simulate processing delay
-        await asyncio.sleep(0.1)
-        return self.get_response(message)
+        
+        # 3. Call Gemini
+        return generate_gemini_response(full_prompt)
 
-    async def stream_response(self, message: str) -> List[str]:
+    async def stream_response(self, user_message: str) -> AsyncGenerator[str, None]:
         """
-        Stream a response character by character.
-        
-        Args:
-            message (str): The user's message
-            
-        Returns:
-            List[str]: List of response chunks
+        Streams the response chunk by chunk.
         """
-        full_response = await self.get_response_async(message)
-        chunks = []
+        full_response = await self.get_response_async(user_message)
         
-        # Create chunks of the response
-        for i in range(1, len(full_response) + 1):
-            chunks.append(full_response[:i])
-            
-        return chunks
+        # Simulate streaming (yield slices)
+        chunk_size = 5 
+        for i in range(0, len(full_response), chunk_size):
+            yield full_response[i:i+chunk_size]
+            await asyncio.sleep(0.01) # Slight delay for typing effect
 
-# Create a singleton instance
 chat_assistant_service = ChatAssistantService()
