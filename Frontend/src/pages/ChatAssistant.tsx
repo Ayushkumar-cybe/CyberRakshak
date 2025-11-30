@@ -5,7 +5,7 @@ import ChatInputBar from "../components/chat/ChatInputBar";
 import ChatSuggestions from "../components/chat/ChatSuggestions";
 import ContextPanel from "../components/chat/ContextPanel";
 import TypingIndicator from "../components/chat/TypingIndicator";
-import { streamChatResponse } from "../services/api";
+import chatAssistantService from "../services/chatAssistant";
 
 interface Message {
   id: string;
@@ -15,53 +15,68 @@ interface Message {
 
 const ChatAssistant = () => {
   const [messages, setMessages] = useState<Message[]>([
-    { id: "welcome", sender: "assistant", text: "Hello! I am CyberRakshak AI. How can I assist you today?" }
+    { 
+      id: "welcome", 
+      sender: "assistant", 
+      // UPDATED GREETING
+      text: "Hello! I am CYRA. I have access to your latest vulnerability scans. How can I help you remediate them today?" 
+    }
   ]);
   const [isTyping, setIsTyping] = useState(false);
   const [contextInfo, setContextInfo] = useState<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll logic
+  // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
 
   const handleSendMessage = async (text: string) => {
     const userMsgId = Date.now().toString();
-    // 1. Add User Message
+    
+    // 1. Prepare History (Exclude the new message we are about to add)
+    const history = messages.map(m => ({
+      role: m.sender, // "user" or "assistant"
+      content: m.text
+    }));
+
+    // 2. Update UI with User Message
     setMessages((prev) => [...prev, { id: userMsgId, sender: "user", text }]);
     setIsTyping(true);
 
     try {
-      // 2. Create Assistant Placeholder
+      // 3. Create Assistant Placeholder
       const aiMsgId = (Date.now() + 1).toString();
       setMessages((prev) => [...prev, { id: aiMsgId, sender: "assistant", text: "" }]);
 
-      // 3. Stream Response using Generator
-      let fullResponse = "";
-      for await (const chunk of streamChatResponse(text)) {
-        fullResponse += chunk;
-        
-        // Update the specific message
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === aiMsgId ? { ...msg, text: fullResponse } : msg
-          )
-        );
-      }
+      // 4. Send Message with History
+      await chatAssistantService.sendStreamingMessage(
+        text, 
+        history, 
+        (currentFullText: string) => {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === aiMsgId ? { ...msg, text: currentFullText } : msg
+            )
+          );
+        }
+      );
 
     } catch (error) {
       console.error("Error getting response:", error);
-      setMessages((prev) => [...prev, { 
+      setMessages((prev) => [
+        ...prev,
+        { 
           id: Date.now().toString(), 
           sender: "assistant", 
-          text: "Sorry, I encountered an error processing your request." 
-      }]);
+          text: "Sorry, I encountered an error connecting to the server." 
+        }
+      ]);
     } finally {
       setIsTyping(false);
     }
 
-    // Optional: Fake Context Update based on keywords (Feature can be expanded later)
+    // Optional: Context Panel Update (Static Mock for now)
     if (text.toLowerCase().includes("cve")) {
       setContextInfo({
         title: "CVE Context",
@@ -84,14 +99,14 @@ const ChatAssistant = () => {
         <div className="mb-4 pb-2 border-b dark:border-slate-700">
           <h1 className="text-xl font-bold flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-            CyberRakshak AI Assistant
+            CYRA AI Assistant
           </h1>
           <p className="opacity-70 text-sm">
             Ask anything about vulnerabilities, attack paths, scan results, or remediation.
           </p>
         </div>
 
-        {/* Suggestions (Only show if empty) */}
+        {/* Suggestions */}
         {messages.length <= 1 && (
            <ChatSuggestions onSelect={(prompt: string) => handleSendMessage(prompt)} />
         )}
@@ -102,9 +117,9 @@ const ChatAssistant = () => {
             {messages.map((msg) => (
               <div key={msg.id}>
                 {msg.sender === "user" ? (
-                  <ChatBubbleUser text={msg.text} /> // Note: prop is 'text' in your component
+                  <ChatBubbleUser text={msg.text} />
                 ) : (
-                  <ChatBubbleAssistant text={msg.text} /> // Note: prop is 'text'
+                  <ChatBubbleAssistant text={msg.text} />
                 )}
               </div>
             ))}
@@ -112,10 +127,10 @@ const ChatAssistant = () => {
             {isTyping && (
               <div className="flex items-center gap-3 ml-2">
                 <div className="bg-blue-100 dark:bg-slate-700 p-2 rounded-full shadow">
-                  <span className="text-blue-600 dark:text-blue-300 font-bold text-xs">AI</span>
+                  <span className="text-blue-600 dark:text-blue-300 font-bold text-xs">CYRA</span>
                 </div>
                 <TypingIndicator />
-                <span className="text-xs text-slate-400 animate-pulse">Processing...</span>
+                <span className="text-xs text-slate-400 animate-pulse">Thinking...</span>
               </div>
             )}
 

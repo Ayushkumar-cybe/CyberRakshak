@@ -74,6 +74,7 @@ class ScanStartRequest(BaseModel):
 
 class ChatMessageRequest(BaseModel):
     message: str
+    history: Optional[List[Dict[str, str]]] = []
 
 class ChatMessageResponse(BaseModel):
     response: str
@@ -261,9 +262,9 @@ def get_scan_graph(
 @router.post("/chat/message", response_model=ChatMessageResponse)
 async def send_chat_message(
     request: ChatMessageRequest,
-    user: User = Depends(get_current_user) # <--- Protected
+    user: User = Depends(get_current_user)
 ):
-    response = await chat_assistant_service.get_response_async(request.message)
+    response = await chat_assistant_service.get_response_async(request.message, request.history)
     return ChatMessageResponse(response=response)
 
 @router.post("/chat/stream")
@@ -272,8 +273,8 @@ async def stream_chat_response(
     user: User = Depends(get_current_user)
 ):
     async def event_generator():
-        # The service returns an async generator, we iterate and yield bytes
-        async for chunk in chat_assistant_service.stream_response(request.message):
+        # Pass history to the service
+        async for chunk in chat_assistant_service.stream_response(request.message, request.history):
             yield chunk
             await asyncio.sleep(0.01)
 

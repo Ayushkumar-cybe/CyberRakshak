@@ -3,14 +3,14 @@ import { streamChatResponse } from "./api";
 class ChatAssistantService {
   async sendStreamingMessage(
     message: string,
+    history: { role: "user" | "assistant"; content: string }[], // <--- Added param
     onChunk: (chunk: string) => void
   ): Promise<void> {
     let fullText = "";
     
-    // Iterate over the async generator
-    for await (const chunk of streamChatResponse(message)) {
+    // Pass history to api
+    for await (const chunk of streamChatResponse(message, history)) {
       fullText += chunk;
-      // Pass the accumulated text to the callback
       onChunk(fullText); 
     }
   }

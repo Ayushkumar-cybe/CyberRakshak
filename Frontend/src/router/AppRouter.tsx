@@ -1,7 +1,7 @@
 // Router configuration for CyberRakshak platform
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AppLayout } from "../layouts/AppLayout";
-
+import AuditLogs from "../pages/AuditLogs";
 import Dashboard from "../pages/Dashboard";
 import ScanConsole from "../pages/ScanConsole";
 import Vulnerabilities from "../pages/Vulnerabilities";
@@ -28,6 +28,7 @@ export const AppRouter = () => {
           <Route path="/reports" element={<Reports />} />
           <Route path="/remediation" element={<Remediation />} />
           <Route path="/assistant" element={<ChatAssistant />} />
+          <Route path="/audit-logs" element={<AuditLogs />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/profile" element={<UserProfile />} />
         </Route>

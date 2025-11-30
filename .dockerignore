@@ -1,0 +1,7 @@
+# Ignore heavy folders during build context transfer
+**/node_modules
+**/__pycache__
+**/.git
+**/outputs
+**/venv
+**/dist
