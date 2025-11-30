@@ -14,11 +14,10 @@ app = FastAPI(
 
 # --- CORS ---
 origins = [
-    "http://161.118.189.151:5173",
+    "http://161.118.189.151",      # <--- Nginx (Port 80)
+    "http://161.118.189.151:5173", # Direct access (Backup)
+    "http://localhost",
     "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://161.118.189.151:8000",
-    "http://localhost:8000",
     "*"
 ]
 

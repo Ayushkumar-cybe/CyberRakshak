@@ -137,6 +137,19 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     restart: always
+
+  nginx:
+    image: nginx:latest
+    container_name: sih-nginx
+    ports:
+      - "80:80" # Expose Port 80 to the world
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    restart: always
+    depends_on:
+      - frontend
+      - backend
+
 volumes:
   postgres_data:
   redis_data:

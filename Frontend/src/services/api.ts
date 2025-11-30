@@ -1,5 +1,5 @@
 // API Service Layer for CyberRakshak Frontend
-const API_BASE_URL = 'http://161.118.189.151:8000/api';
+const API_BASE_URL = '/api';
 
 interface ScanStartRequest {
   target: string;
@@ -116,6 +116,7 @@ interface ReportResponse {
 // Chat Assistant Interfaces
 interface ChatMessageRequest {
   message: string;
+  history?: { role: "user" | "assistant"; content: string }[];
 }
 
 interface ChatMessageResponse {
@@ -209,23 +210,26 @@ export const sendChatMessage = async (message: string): Promise<string> => {
 };
 
 // Stream chat response (returns an async generator)
-export async function* streamChatResponse(message: string): AsyncGenerator<string, void, unknown> {
+export async function* streamChatResponse(
+  message: string, 
+  history: { role: "user" | "assistant"; content: string }[] = [] // <--- Added param
+): AsyncGenerator<string, void, unknown> {
+  
   const url = `${API_BASE_URL}/chat/stream`;
   const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ message }),
+    // Pass history in body
+    body: JSON.stringify({ message, history }), 
   });
 
   if (!response.ok) {
     throw new Error(`API call failed: ${response.status} ${response.statusText}`);
   }
-
-  if (!response.body) {
-    throw new Error('Response body is null');
-  }
+  
+  if (!response.body) throw new Error('Response body is null');
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -234,7 +238,6 @@ export async function* streamChatResponse(message: string): AsyncGenerator<strin
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      
       const chunk = decoder.decode(value, { stream: true });
       yield chunk;
     }

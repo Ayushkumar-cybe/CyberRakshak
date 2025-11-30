@@ -12,33 +12,32 @@ class ChatAssistantService:
     def __init__(self):
         self.system_prompt = """
         You are Cyra, an expert cybersecurity assistant for the CyberRakshak platform.
-        You have access to the user's latest vulnerability scan reports below.
         
-        Rules:
-        1. **Greeting Protocol:** If the user simply says "hello", "hi", or greets you, DO NOT list the vulnerabilities immediately. Instead, introduce yourself, mention the target of the latest scan, and ask if they would like a summary or remediation advice.
-        2. **Context Awareness:** Answer questions strictly based on the provided scan context.
-        3. **Prioritization:** When asked for a summary, prioritize Critical and High severity vulnerabilities first.
-        4. **Actionable Advice:** Provide specific commands (e.g., Nginx/Apache config) when asked for remediation.
-        5. **Unknowns:** If the user asks about something not in the scan, say "I don't see that in your latest scan results."
-        6. **Tone:** Be professional, concise, and encouraging.
+        CONTEXT:
+        You have access to the user's latest vulnerability scan report (provided below).
+        You also have the history of this conversation.
+        
+        RULES:
+        1. **No Repetition:** Do NOT introduce yourself ("I am Cyra...") if you have already done so in the conversation history. Just answer the question directly.
+        2. **Context Awareness:** Use the scan report to answer specific questions about ports, vulnerabilities, and risks.
+        3. **Actionable Advice:** Provide specific commands (Nginx/Apache/Linux) when asked for remediation.
+        4. **Unknowns:** If the user asks about something not in the scan or history, say "I don't see that in your latest scan results."
+        5. **Tone:** Professional, concise, and helpful.
         """
 
     def _get_latest_scan_context(self) -> str:
         """Fetches the most recent completed scan report from the DB."""
         try:
             with Session(engine) as session:
-                # Get latest completed job
                 job = session.exec(select(Job).where(Job.status == "completed").order_by(Job.created_at.desc()).limit(1)).first()
                 
                 if not job or not job.normalized_report:
-                    return "No scan data available yet. Tell the user to run a scan first."
+                    return "No scan data available yet."
                 
                 report = job.normalized_report
                 vulns = report.get("vulnerabilities", [])
                 
-                # Summarize for the AI (Token efficiency)
                 summary = [f"Target: {job.target}"]
-                
                 ports = report.get('ports', [])
                 if ports:
                     summary.append(f"Open Ports: {', '.join([str(p.get('port')) for p in ports])}")
@@ -47,7 +46,6 @@ class ChatAssistantService:
                     summary.append("No vulnerabilities found.")
                 else:
                     summary.append(f"Found {len(vulns)} vulnerabilities. Top findings:")
-                    # Limit context size to avoid token limits
                     for v in vulns[:20]: 
                         title = v.get('title', 'Unknown')
                         severity = v.get('severity', 'Info')
@@ -57,37 +55,46 @@ class ChatAssistantService:
                 return "\n".join(summary)
         except Exception as e:
             logger.error(f"Context retrieval failed: {e}")
-            return "Error retrieving scan data from database."
+            return "Error retrieving scan data."
 
-    async def get_response_async(self, user_message: str) -> str:
-        """Generates a response using Gemini + Local Scan Context."""
-        # 1. Retrieve Context
-        scan_context = self._get_latest_scan_context()
+    def _format_history(self, history: List[Dict[str, str]]) -> str:
+        """Formats previous chat messages for the prompt."""
+        if not history: return "No previous conversation."
         
-        # 2. Construct Prompt
+        formatted = []
+        # Limit to last 6 turns to save tokens and keep focus
+        for msg in history[-6:]:
+            role = "User" if msg.get("role") == "user" else "Cyra (AI)"
+            content = msg.get("content", "").replace("\n", " ")
+            formatted.append(f"{role}: {content}")
+        return "\n".join(formatted)
+
+    async def get_response_async(self, user_message: str, history: List[Dict[str, str]] = []) -> str:
+        scan_context = self._get_latest_scan_context()
+        history_text = self._format_history(history)
+        
         full_prompt = f"""
         {self.system_prompt}
         
-        === LATEST SCAN CONTEXT ===
+        === LATEST SCAN DATA ===
         {scan_context}
-        ===========================
+        ========================
+        
+        === CONVERSATION HISTORY ===
+        {history_text}
+        ============================
         
         User Query: {user_message}
         """
         
-        # 3. Call Gemini
         return generate_gemini_response(full_prompt)
 
-    async def stream_response(self, user_message: str) -> AsyncGenerator[str, None]:
-        """
-        Streams the response chunk by chunk.
-        """
-        full_response = await self.get_response_async(user_message)
+    async def stream_response(self, user_message: str, history: List[Dict[str, str]] = []) -> AsyncGenerator[str, None]:
+        full_response = await self.get_response_async(user_message, history)
         
-        # Simulate streaming (yield slices)
         chunk_size = 5 
         for i in range(0, len(full_response), chunk_size):
             yield full_response[i:i+chunk_size]
-            await asyncio.sleep(0.01) # Slight delay for typing effect
+            await asyncio.sleep(0.01)
 
 chat_assistant_service = ChatAssistantService()
