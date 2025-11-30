@@ -30,84 +30,49 @@ services:
       timeout: 10s
       retries: 5
 
-  # --- Redis for Caching ---
-  redis:
-    image: redis:7-alpine
-    container_name: sih-redis
-    ports:
-      - "6379:6379"
-    restart: always
-    volumes:
-      - redis_data:/data
-  # -------------------------
-
   backend:
     build:
-      context: ./backend  # <--- CHANGED: Point to backend dir
+      context: .
       dockerfile: Dockerfile.api
     container_name: sih-backend
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://postgres:mysecretpassword@postgres:5432/sih_db
-      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672//
-      - REDIS_URL=redis://redis:6379
-      - QDRANT_URL=http://qdrant:6333
-      - GEMINI_API_KEY=AIzaSyBfqflb-Z9ND6aGCzYZBVfzptg9_DHLSuE
-      - GEMINI_MODEL=gemini-2.5-flash
+      DATABASE_URL: "postgresql://postgres:mysecretpassword@postgres:5432/sih_db"
+      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672//"
     volumes:
-      - ./backend:/app
+      - .:/app
     depends_on:
-      qdrant:
-        condition: service_started
       postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-      redis:
-        condition: service_started
     restart: always
 
   celery-worker:
     build:
-      context: ./backend # <--- CHANGED
+      context: .
       dockerfile: Dockerfile.worker
     container_name: sih-celery-worker
     environment:
       DOCKER_ENV: "true" 
       DATABASE_URL: "postgresql://postgres:mysecretpassword@postgres:5432/sih_db"
       RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672//"
-      HOST_PROJECT_PATH: "${PWD}/backend" 
+      HOST_PROJECT_PATH: "${PWD}" 
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./backend/outputs:/app/outputs
-      - ./backend:/app
+      - ./outputs:/app/outputs
+      - .:/app
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-      redis:
-        condition: service_started
     restart: always
-
-  frontend:
-    build:
-      context: ./Frontend
-      dockerfile: Dockerfile
-    container_name: sih-frontend
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./Frontend:/app
-      - /app/node_modules
-    restart: always
-    depends_on:
-      - backend
 
   wappalyzer:
     build:
-      context: ./backend # <--- CHANGED
+      context: .
       dockerfile: Dockerfile.wappalyzer
     image: local/wappalyzer
     container_name: sih-wappalyzer-builder
@@ -116,7 +81,7 @@ services:
 
   gvm-tools:
     build:
-      context: ./backend # <--- CHANGED
+      context: .
       dockerfile: Dockerfile.gvm-tools
     image: local/gvm-tools
     container_name: sih-gvm-tools-builder
@@ -129,15 +94,5 @@ services:
     entrypoint: ["echo", "Metasploit image pulled."]
     restart: "no"
 
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: sih-qdrant
-    ports:
-      - "6333:6333"
-    volumes:
-      - qdrant_data:/qdrant/storage
-    restart: always
 volumes:
   postgres_data:
-  redis_data:
-  qdrant_data:

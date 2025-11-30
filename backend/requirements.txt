@@ -1,0 +1,33 @@
+# Web Framework
+fastapi
+uvicorn[standard]
+
+# Task Queue
+celery
+eventlet
+amqp     # RabbitMQ transport
+
+# Database
+sqlmodel
+psycopg2-binary
+
+# Utilities
+python-dotenv
+pydantic-settings
+requests
+networkx
+fpdf2
+numpy
+redis
+fastapi-cache2[redis]
+
+# --- SECURITY ---
+passlib
+bcrypt==3.2.2
+python-jose[cryptography]
+python-multipart
+
+# --- AI & RAG Dependencies ---
+sentence-transformers==2.2.2
+huggingface_hub==0.13.3
+qdrant-client

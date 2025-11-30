@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 antialiased;
+}
+
+#root {
+  @apply min-h-screen;
+}
+
+@keyframes slideLeft {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-left {
+  animation: slideLeft 0.3s ease-out;
+}
+
+/* Animated Attack Path Edge */
+.attack-edge path {
+  stroke: #ef4444 !important;
+  filter: drop-shadow(0 0 4px #ef4444);
+  animation: pulse-edge 1.2s infinite ease-in-out;
+}
+
+@keyframes pulse-edge {
+  0% { stroke-width: 2; opacity: 0.7; }
+  50% { stroke-width: 4; opacity: 1; }
+  100% { stroke-width: 2; opacity: 0.7; }
+}
+
+@keyframes fade-up {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.25s ease-out;
+}
+
