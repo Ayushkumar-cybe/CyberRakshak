@@ -9,7 +9,7 @@ from fastapi.security import OAuth2PasswordRequestForm # <--- Security Import
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlmodel import Session, select
 from app.database import get_session
-from app.models import Job, JobStatus, AuditLog, VulnerabilityMetadata, User
+from app.models import Job, JobStatus, AuditLog, VulnerabilityMetadata, User, Notification
 from app.worker.tasks import run_scan_task
 from app.graph import build_attack_graph
 from app.reporting import generate_pdf_report
@@ -71,6 +71,8 @@ class ScanStartRequest(BaseModel):
     target: str
     scanners: Optional[Union[List[str], Dict[str, ScannerConfig]]] = None
     config: Optional[ScannerConfigs] = ScannerConfigs()
+    notify_email: bool = False
+    email_recipients: List[str] = []
 
 class ChatMessageRequest(BaseModel):
     message: str
@@ -210,7 +212,9 @@ def start_scan(
         target=request.target, 
         status=JobStatus.PENDING,
         scanners_requested=selected_scanners,
-        tool_status={name: "pending" for name in selected_scanners}
+        tool_status={name: "pending" for name in selected_scanners},
+        notify_email=request.notify_email,
+        email_recipients=request.email_recipients
     )
     session.add(new_job)
     session.commit()
@@ -574,3 +578,8 @@ def get_remediation_plan(
     remediation_plan.sort(key=lambda x: severity_order.get(x["severity"].lower(), 4))
 
     return remediation_plan
+
+@router.get("/notifications", response_model=List[Notification])
+def get_notifications(limit: int = 20, session: Session = Depends(get_session)):
+    # Simple fetch of latest notifications
+    return session.exec(select(Notification).order_by(Notification.timestamp.desc()).limit(limit)).all()

@@ -1,5 +1,7 @@
 import networkx as nx
 from typing import Dict, Any
+from playwright.sync_api import sync_playwright
+import time
 
 def build_attack_graph(report: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -31,25 +33,23 @@ def build_attack_graph(report: Dict[str, Any]) -> Dict[str, Any]:
             G.add_node(service_id, label=service, type="default", style={"background": "#0891b2", "color": "white"})
             G.add_edge(port_id, service_id)
 
-    # 3. Level 2: Technologies (Robust Check)
+    # 3. Level 2: Technologies
     for tech in report.get("technologies", []):
         tech_name = tech.get('name')
-        if not tech_name: continue # Skip if name is missing (prevents KeyError)
+        if not tech_name: continue
         
         tech_id = f"tech_{tech_name}"
-        version = tech.get('version')
-        label = f"{tech_name} {version}" if version else tech_name
+        label = f"{tech_name} {tech.get('version', '')}".strip()
         
         G.add_node(tech_id, label=label, type="default", style={"background": "#9333ea", "color": "white"})
         G.add_edge(root_id, tech_id)
 
-    # 4. Level 3: Vulnerabilities (Robust Check)
+    # 4. Level 3: Vulnerabilities
     for vuln in report.get("vulnerabilities", []):
         title = vuln.get('title', 'Unknown Finding')
         tool = vuln.get('tool', 'unk')
         
-        # Ensure ID generation is safe from NoneType errors
-        vuln_id = f"vuln_{tool}_{title[:10].replace(' ', '_')}"
+        vuln_id = f"vuln_{tool}_{title[:10].replace(' ', '_')}_{id(vuln)}"
         severity = vuln.get('severity', 'info').lower()
         
         bg_color = "#94a3b8"
@@ -101,3 +101,37 @@ def build_attack_graph(report: Dict[str, Any]) -> Dict[str, Any]:
         })
 
     return output
+
+# --- NEW: Playwright Image Generation ---
+def generate_graph_image(job_id: str, output_path: str):
+    """
+    Generates a PNG by visiting the Frontend's snapshot page.
+    Requires 'playwright' installed and 'chromium' browser available in the worker container.
+    """
+    if not job_id: return None
+
+    try:
+        with sync_playwright() as p:
+            # Launch browser (headless)
+            browser = p.chromium.launch(headless=True, args=['--no-sandbox'])
+            page = browser.new_page()
+            
+            url = f"http://nginx/graph-snapshot/{job_id}"
+            print(f"Snapshotting graph from: {url}")
+            
+            page.goto(url)
+            
+            # Wait for nodes to render
+            try:
+                page.wait_for_selector(".react-flow__node", timeout=10000) 
+                time.sleep(3) # Allow layout to stabilize
+            except:
+                print("Graph nodes did not appear (might be empty graph)")
+            
+            page.screenshot(path=output_path, full_page=True)
+            browser.close()
+            
+        return output_path
+    except Exception as e:
+        print(f"Playwright Screenshot Failed: {e}")
+        return None

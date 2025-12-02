@@ -20,6 +20,7 @@ fpdf2
 numpy
 redis
 fastapi-cache2[redis]
+playwright
 
 # --- SECURITY ---
 passlib
@@ -31,3 +32,8 @@ python-multipart
 sentence-transformers==2.2.2
 huggingface_hub==0.13.3
 qdrant-client
+
+# --- Notifications & Reporting ---
+fastapi-mail
+matplotlib
+scipy

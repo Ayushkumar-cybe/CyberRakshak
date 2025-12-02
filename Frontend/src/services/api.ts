@@ -1,10 +1,15 @@
 // API Service Layer for CyberRakshak Frontend
+
+// Use relative path so it works with Nginx (Port 80) or direct (if proxied)
+// If you are testing on Port 5173 without Nginx, change this back to the full http://IP:8000/api
 const API_BASE_URL = '/api';
 
 interface ScanStartRequest {
   target: string;
   scanners?: Record<string, any>;
   config?: Record<string, any>;
+  notify_email?: boolean;
+  email_recipients?: string[];
 }
 
 interface ScanStartResponse {
@@ -28,8 +33,8 @@ interface DashboardStatsResponse {
   total_vulnerabilities: number;
   critical_findings: number;
   high_findings: number;
-  medium_findings: number; // <--- NEW
-  low_findings: number;    // <--- NEW
+  medium_findings: number;
+  low_findings: number;
   asset_criticality_score: number;
   open_ports_detected: number;
   unified_cyber_score: number;
@@ -48,6 +53,18 @@ export interface RemediationStep {
   action: string;
   source: string;
 }
+
+// --- MISSING NOTIFICATION INTERFACE ADDED HERE ---
+export interface Notification {
+  id: string;
+  title: string;
+  message: string;
+  type: "info" | "success" | "error";
+  is_read: boolean;
+  timestamp: string;
+  job_id?: string;
+}
+// -------------------------------------------------
 
 interface ThreatIntelSummaryResponse {
   total_cve_tracked: number;
@@ -126,7 +143,7 @@ interface ChatMessageResponse {
 // Helper function for API calls
 async function apiCall<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
-  
+
   const config: RequestInit = {
     headers: {
       'Content-Type': 'application/json',
@@ -137,11 +154,11 @@ async function apiCall<T>(endpoint: string, options: RequestInit = {}): Promise<
 
   try {
     const response = await fetch(url, config);
-    
+
     if (!response.ok) {
       throw new Error(`API call failed: ${response.status} ${response.statusText}`);
     }
-    
+
     return await response.json();
   } catch (error) {
     console.error(`API call to ${url} failed:`, error);
@@ -209,10 +226,10 @@ export const sendChatMessage = async (message: string): Promise<string> => {
   return response.response;
 };
 
-// Stream chat response (returns an async generator)
+// Stream chat response
 export async function* streamChatResponse(
   message: string, 
-  history: { role: "user" | "assistant"; content: string }[] = [] // <--- Added param
+  history: { role: "user" | "assistant"; content: string }[] = []
 ): AsyncGenerator<string, void, unknown> {
   
   const url = `${API_BASE_URL}/chat/stream`;
@@ -221,8 +238,7 @@ export async function* streamChatResponse(
     headers: {
       'Content-Type': 'application/json',
     },
-    // Pass history in body
-    body: JSON.stringify({ message, history }), 
+    body: JSON.stringify({ message, history }),
   });
 
   if (!response.ok) {
@@ -261,3 +277,17 @@ export const getReportStats = async (): Promise<ReportStatsResponse> => {
 export const getRemediationPlan = async (jobId: string): Promise<RemediationStep[]> => {
   return apiCall<RemediationStep[]>(`/remediation/${jobId}`);
 };
+
+// --- NEW: NOTIFICATION FUNCTIONS ---
+export const getNotifications = async (): Promise<Notification[]> => {
+  // The backend endpoint is /api/scan/logs but tailored for notifications? 
+  // Or strictly /notifications if you added that endpoint.
+  // Assuming we use the /notifications endpoint we defined in the previous backend step:
+  return apiCall<Notification[]>('/notifications');
+};
+
+export const markNotificationRead = async (id: string): Promise<void> => {
+  // Placeholder if backend doesn't have this specific route yet
+  return Promise.resolve();
+};
+// -----------------------------------

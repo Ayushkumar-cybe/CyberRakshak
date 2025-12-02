@@ -27,6 +27,11 @@ const ScanConsole = () => {
   const [logs, setLogs] = useState<string[]>([]);
   const [historyKey, setHistoryKey] = useState(0);
 
+  // --- NEW: Notification State ---
+  const [notifyEmail, setNotifyEmail] = useState(false);
+  const [emailList, setEmailList] = useState("");
+  // -------------------------------
+
   // Validations
   const isValidIp = (value: string) => {
     const ipv4Regex = /^(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)){3}$/;
@@ -61,7 +66,14 @@ const ScanConsole = () => {
         };
       }
     });
-    return { target, scanners: scannersPayload };
+
+    // --- NEW: Include Email Config ---
+    return { 
+      target, 
+      scanners: scannersPayload,
+      notify_email: notifyEmail,
+      email_recipients: notifyEmail ? emailList.split(",").map(e => e.trim()).filter(e => e) : []
+    };
   };
 
   // POLLING LOGIC
@@ -74,14 +86,11 @@ const ScanConsole = () => {
         const currentToolStatus = statusData.tool_status || {};
         
         Object.entries(currentToolStatus).forEach(([tool, status]) => {
-          // Default to 'pending' if we haven't seen this tool before
           const prev = previousToolStatus[tool] || "pending";
           
           if (prev !== status) {
             const time = new Date().toLocaleTimeString();
             
-            // FIX: If we jumped straight from 'pending' to 'completed'/'failed',
-            // it means we missed the 'running' state. Force a start log entry.
             if (prev === "pending" && (status === "completed" || status === "failed")) {
                  setLogs(prevLogs => [...prevLogs, `[${time}] ${tool.toUpperCase()}: Started scanning...`]);
             }
@@ -130,6 +139,10 @@ const ScanConsole = () => {
       setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] Job ID: ${response.job_id}`]);
       setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] Scanners queued: ${response.scanners_requested.join(", ")}`]);
       
+      if (notifyEmail) {
+          setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] Email notifications enabled for: ${emailList}`]);
+      }
+
       pollScanStatus(response.job_id);
 
     } catch (err: any) {
@@ -198,6 +211,30 @@ const ScanConsole = () => {
               <p className="text-xs opacity-70">Supports single IPv4 or domain.</p>
               {targetError && <p className="text-xs text-red-400">{targetError}</p>}
             </div>
+
+            {/* --- NEW: Email Notification UI --- */}
+            <div className="mt-4 p-4 bg-slate-50 dark:bg-slate-900/50 rounded-lg border border-slate-200 dark:border-slate-700">
+              <div className="flex items-center gap-2 mb-2">
+                <input 
+                  type="checkbox" 
+                  checked={notifyEmail} 
+                  onChange={(e) => setNotifyEmail(e.target.checked)}
+                  className="w-4 h-4"
+                />
+                <label className="text-sm font-semibold">Email Notification</label>
+              </div>
+              
+              {notifyEmail && (
+                <input
+                  type="text"
+                  value={emailList}
+                  onChange={(e) => setEmailList(e.target.value)}
+                  placeholder="Enter emails (comma separated)..."
+                  className="w-full p-2 text-sm rounded border bg-white dark:bg-slate-800"
+                />
+              )}
+            </div>
+            {/* ---------------------------------- */}
 
             <button
               disabled={!canRunScan || isRunning}
