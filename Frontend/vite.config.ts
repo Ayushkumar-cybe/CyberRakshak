@@ -11,6 +11,9 @@ export default defineConfig({
       '127.0.0.1',
       'nginx'
     ],
+    hmr: {
+      overlay: false, // disable dev overlay that pops up on runtime errors
+    },
     host: '0.0.0.0',   // Ensure it listens on all interfaces
     port: 5173
   }

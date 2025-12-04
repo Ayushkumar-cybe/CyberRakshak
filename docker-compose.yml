@@ -46,8 +46,8 @@ services:
       context: ./backend  # <--- CHANGED: Point to backend dir
       dockerfile: Dockerfile.api
     container_name: sih-backend
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     environment:
       - DATABASE_URL=postgresql://postgres:mysecretpassword@postgres:5432/sih_db
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672//
@@ -96,8 +96,8 @@ services:
       context: ./Frontend
       dockerfile: Dockerfile
     container_name: sih-frontend
-    ports:
-      - "5173:5173"
+    expose:
+      - "5173"
     volumes:
       - ./Frontend:/app
       - /app/node_modules
