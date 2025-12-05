@@ -4,32 +4,30 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# REPLACE THIS WITH YOUR AI INSTANCE'S PRIVATE IP
-# Example: "http://10.0.0.5:5000/generate"
+# This points to your separate AI Server (Instance B)
+# Default to localhost for dev, but in prod (docker-compose) this will be the private IP
 AI_SERVER_URL = os.getenv("AI_SERVER_URL", "http://10.0.0.249:5000/generate")
 
-def generate_gemini_response(prompt: str) -> str:
+def generate_ai_response(prompt: str) -> str:
     """
-    Redirects the call to our custom AI Microservice on the AI Server.
-    We keep the function name 'generate_gemini_response' so we don't 
-    have to rewrite the rest of the backend code.
+    Sends the prompt to the internal AI Microservice.
     """
     try:
         # The AI Service expects {"query": "..."}
         payload = {"query": prompt}
-        
-        # 60s timeout because CPU inference can be slow
-        response = requests.post(AI_SERVER_URL, json=payload, timeout=60)
-        
+
+        # 120s timeout because CPU inference on the other server might be slow
+        response = requests.post(AI_SERVER_URL, json=payload, timeout=120)
+
         if response.status_code == 200:
             return response.json().get("response", "No response text from AI.")
-        
+
         error_msg = f"AI Server Error ({response.status_code}): {response.text}"
         logger.error(error_msg)
         return error_msg
-             
+
     except requests.exceptions.ConnectionError:
-        msg = "Connection Refused: Is the AI Server (Instance B) running and reachable?"
+        msg = "Connection Refused: The AI Server is unreachable."
         logger.error(msg)
         return msg
     except Exception as e:
