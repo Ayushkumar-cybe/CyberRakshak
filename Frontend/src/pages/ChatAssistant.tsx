@@ -1,154 +1,221 @@
-import React, { useState, useEffect, useRef } from "react";
-import ChatBubbleUser from "../components/chat/ChatBubbleUser";
-import ChatBubbleAssistant from "../components/chat/ChatBubbleAssistant";
-import ChatInputBar from "../components/chat/ChatInputBar";
-import ChatSuggestions from "../components/chat/ChatSuggestions";
-import ContextPanel from "../components/chat/ContextPanel";
-import TypingIndicator from "../components/chat/TypingIndicator";
-import chatAssistantService from "../services/chatAssistant";
-
-interface Message {
-  id: string;
-  sender: "user" | "assistant";
-  text: string;
-}
+import React, { useState, useRef, useEffect } from "react";
+import { Bot, Send, Zap, Shield, FileText, User, Radar, Brain } from "lucide-react";
 
 const ChatAssistant = () => {
-  const [messages, setMessages] = useState<Message[]>([
-    { 
-      id: "welcome", 
-      sender: "assistant", 
-      // UPDATED GREETING
-      text: "Hello! I am CYRA. I have access to your latest vulnerability scans. How can I help you remediate them today?" 
+  const [messages, setMessages] = useState([
+    {
+      id: 1,
+      sender: "ai",
+      content: "Hello! I'm CyRa, your cybersecurity operations assistant. How can I help you today?",
+      timestamp: new Date()
     }
   ]);
+  const [inputValue, setInputValue] = useState("");
   const [isTyping, setIsTyping] = useState(false);
-  const [contextInfo, setContextInfo] = useState<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom
-  useEffect(() => {
+  // Capability cards data
+  const capabilities = [
+    {
+      id: 1,
+      icon: <Radar className="w-8 h-8 text-blue-500" />,
+      title: "Initiate Intelligent Scan",
+      description: "Discover vulnerabilities across your infrastructure"
+    },
+    {
+      id: 2,
+      icon: <Brain className="w-8 h-8 text-purple-500" />,
+      title: "Analyze Attack Paths",
+      description: "Map potential routes attackers could take"
+    },
+    {
+      id: 3,
+      icon: <Zap className="w-8 h-8 text-cyan-500" />,
+      title: "Auto-Remediate Criticals",
+      description: "Apply patches and fixes automatically"
+    }
+  ];
+
+  // Scroll to bottom of messages
+  const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isTyping]);
+  };
 
-  const handleSendMessage = async (text: string) => {
-    const userMsgId = Date.now().toString();
-    
-    // 1. Prepare History (Exclude the new message we are about to add)
-    const history = messages.map(m => ({
-      role: m.sender, // "user" or "assistant"
-      content: m.text
-    }));
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
 
-    // 2. Update UI with User Message
-    setMessages((prev) => [...prev, { id: userMsgId, sender: "user", text }]);
+  // Handle sending a message
+  const handleSendMessage = () => {
+    if (inputValue.trim() === "") return;
+
+    // Add user message
+    const newUserMessage = {
+      id: messages.length + 1,
+      sender: "user",
+      content: inputValue,
+      timestamp: new Date()
+    };
+
+    setMessages(prev => [...prev, newUserMessage]);
+    setInputValue("");
     setIsTyping(true);
 
-    try {
-      // 3. Create Assistant Placeholder
-      const aiMsgId = (Date.now() + 1).toString();
-      setMessages((prev) => [...prev, { id: aiMsgId, sender: "assistant", text: "" }]);
-
-      // 4. Send Message with History
-      await chatAssistantService.sendStreamingMessage(
-        text, 
-        history, 
-        (currentFullText: string) => {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === aiMsgId ? { ...msg, text: currentFullText } : msg
-            )
-          );
-        }
-      );
-
-    } catch (error) {
-      console.error("Error getting response:", error);
-      setMessages((prev) => [
-        ...prev,
-        { 
-          id: Date.now().toString(), 
-          sender: "assistant", 
-          text: "Sorry, I encountered an error connecting to the server." 
-        }
-      ]);
-    } finally {
+    // Simulate AI response after delay
+    setTimeout(() => {
+      const aiResponse = {
+        id: messages.length + 2,
+        sender: "ai",
+        content: "I've analyzed your request and found several potential vulnerabilities. Would you like me to generate a detailed report or prioritize remediation steps?",
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, aiResponse]);
       setIsTyping(false);
-    }
+    }, 1500);
+  };
 
-    // Optional: Context Panel Update (Static Mock for now)
-    if (text.toLowerCase().includes("cve")) {
-      setContextInfo({
-        title: "CVE Context",
-        subtitle: "Extracted from Knowledge Base",
-        sections: [
-          { heading: "Source", body: "National Vulnerability Database (NVD)" },
-          { heading: "Status", body: "Analysis Pending" }
-        ]
-      });
+  // Handle capability click
+  const handleCapabilityClick = (capability: any) => {
+    const newUserMessage = {
+      id: messages.length + 1,
+      sender: "user",
+      content: capability.title,
+      timestamp: new Date()
+    };
+
+    setMessages(prev => [...prev, newUserMessage]);
+    setIsTyping(true);
+
+    // Simulate AI response after delay
+    setTimeout(() => {
+      const aiResponse = {
+        id: messages.length + 2,
+        sender: "ai",
+        content: `I'm initiating ${capability.title.toLowerCase()}. This may take a moment while I scan your systems and correlate threat intelligence.`,
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, aiResponse]);
+      setIsTyping(false);
+    }, 1500);
+  };
+
+  // Handle Enter key press
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
     }
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-6rem)]">
-
-      {/* LEFT: CHAT PANEL */}
-      <div className="lg:col-span-2 rounded-xl shadow p-4 flex flex-col bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-800 dark:to-slate-900">
-
-        {/* Header */}
-        <div className="mb-4 pb-2 border-b dark:border-slate-700">
-          <h1 className="text-xl font-bold flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-            CYRA AI Assistant
-          </h1>
-          <p className="opacity-70 text-sm">
-            Ask anything about vulnerabilities, attack paths, scan results, or remediation.
-          </p>
+    <div className="min-h-screen w-full flex flex-col items-center relative bg-[#f0f2f5] dark:bg-[#050b14] transition-colors duration-300 bg-grid-slate-200/[0.5] dark:bg-grid-white/[0.05]">
+      {/* Floating Header */}
+      <div className="fixed top-0 left-0 right-0 z-10 flex justify-center pt-6">
+        <div className="flex items-center bg-white/80 dark:bg-[#1e293b]/80 backdrop-blur-xl px-6 py-3 rounded-full border border-slate-200 dark:border-white/10 shadow-lg">
+          <Bot className="w-5 h-5 text-cyan-500 mr-2" />
+          <span className="font-semibold text-slate-800 dark:text-slate-100">CyRa AI</span>
+          <div className="flex items-center ml-3">
+            <div className="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse"></div>
+            <span className="text-xs text-green-600 dark:text-green-400">Online</span>
+          </div>
         </div>
+      </div>
 
-        {/* Suggestions */}
-        {messages.length <= 1 && (
-           <ChatSuggestions onSelect={(prompt: string) => handleSendMessage(prompt)} />
+      {/* Chat Container */}
+      <div className="flex-1 w-full max-w-5xl pt-24 pb-32 px-4">
+        {/* Empty State - Starter Grid */}
+        {messages.length === 1 && (
+          <div className="flex flex-col items-center justify-center h-full py-12">
+            <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100 mb-2">How can I assist you today?</h2>
+            <p className="text-slate-600 dark:text-slate-400 mb-12">Select a capability to get started</p>
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-4xl">
+              {capabilities.map((capability) => (
+                <div 
+                  key={capability.id}
+                  className="bg-white dark:bg-[#1e293b] border border-slate-200 dark:border-white/10 hover:border-cyan-500 shadow-sm hover:shadow-xl transition-all p-8 flex flex-col items-center gap-4 cursor-pointer rounded-xl"
+                  onClick={() => handleCapabilityClick(capability)}
+                >
+                  <div className="p-3 rounded-full bg-slate-100 dark:bg-slate-700">
+                    {capability.icon}
+                  </div>
+                  <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 text-center">{capability.title}</h3>
+                  <p className="text-slate-600 dark:text-slate-400 text-center text-sm">{capability.description}</p>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
 
-        {/* Chat messages container */}
-        <div className="flex-1 overflow-y-auto p-2 space-y-4 scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-600">
-          <div className="space-y-4">
-            {messages.map((msg) => (
-              <div key={msg.id}>
-                {msg.sender === "user" ? (
-                  <ChatBubbleUser text={msg.text} />
+        {/* Chat Messages */}
+        {messages.length > 1 && (
+          <div className="space-y-6">
+            {messages.map((message) => (
+              <div key={message.id} className={`flex ${message.sender === "user" ? "justify-end" : "justify-start"}`}>
+                {message.sender === "user" ? (
+                  // User Message Bubble
+                  <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-6 py-3 max-w-[80%]">
+                    <p>{message.content}</p>
+                  </div>
                 ) : (
-                  <ChatBubbleAssistant text={msg.text} />
+                  // AI Message Bubble
+                  <div className="bg-white dark:bg-[#1e293b] border border-slate-200 dark:border-slate-700 rounded-2xl rounded-tl-sm px-6 py-6 shadow-sm w-full max-w-[80%]">
+                    <div className="flex items-start mb-3">
+                      <div className="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center mr-3 flex-shrink-0">
+                        <Bot className="w-4 h-4 text-cyan-500" />
+                      </div>
+                      <span className="font-semibold text-slate-800 dark:text-slate-100">CyRa AI</span>
+                    </div>
+                    <p className="text-slate-800 dark:text-slate-100">{message.content}</p>
+                  </div>
                 )}
               </div>
             ))}
-
+            
+            {/* Typing Indicator */}
             {isTyping && (
-              <div className="flex items-center gap-3 ml-2">
-                <div className="bg-blue-100 dark:bg-slate-700 p-2 rounded-full shadow">
-                  <span className="text-blue-600 dark:text-blue-300 font-bold text-xs">CYRA</span>
+              <div className="flex justify-start">
+                <div className="bg-white dark:bg-[#1e293b] border border-slate-200 dark:border-slate-700 rounded-2xl rounded-tl-sm px-6 py-6 shadow-sm w-full max-w-[80%]">
+                  <div className="flex items-start mb-3">
+                    <div className="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center mr-3 flex-shrink-0">
+                      <Bot className="w-4 h-4 text-cyan-500" />
+                    </div>
+                    <span className="font-semibold text-slate-800 dark:text-slate-100">CyRa AI</span>
+                  </div>
+                  <div className="flex space-x-1">
+                    <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
+                    <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }}></div>
+                    <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "0.4s" }}></div>
+                  </div>
                 </div>
-                <TypingIndicator />
-                <span className="text-xs text-slate-400 animate-pulse">Thinking...</span>
               </div>
             )}
-
+            
             <div ref={messagesEndRef} />
           </div>
-        </div>
-
-        {/* Input bar */}
-        <div className="border-t dark:border-slate-700 pt-3">
-          <ChatInputBar onSend={handleSendMessage} disabled={isTyping} />
-        </div>
+        )}
       </div>
 
-      {/* RIGHT: CONTEXT PANEL */}
-      <div className="bg-white dark:bg-slate-800 rounded-xl shadow p-4 hidden lg:block border-l dark:border-slate-700 overflow-y-auto">
-        <ContextPanel context={contextInfo} />
+      {/* Omni-Bar Input */}
+      <div className="fixed bottom-0 left-0 right-0 z-10 flex justify-center pb-6">
+        <div className="w-full max-w-3xl bg-white/80 dark:bg-[#1e293b]/80 backdrop-blur-xl border border-slate-300 dark:border-cyan-500/30 rounded-full shadow-2xl p-2 flex items-center gap-2">
+          <textarea
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyPress={handleKeyPress}
+            placeholder="Message CyRa AI..."
+            className="flex-1 bg-transparent border-0 focus:ring-0 text-slate-800 dark:text-slate-100 placeholder-slate-500 dark:placeholder-slate-400 text-lg px-6 py-4 resize-none max-h-32"
+            rows={1}
+          />
+          <button
+            onClick={handleSendMessage}
+            disabled={inputValue.trim() === ""}
+            className="w-12 h-12 rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 disabled:opacity-50 flex items-center justify-center transition-all shadow-lg"
+          >
+            <Send className="w-5 h-5 text-white" />
+          </button>
+        </div>
       </div>
-
     </div>
   );
 };

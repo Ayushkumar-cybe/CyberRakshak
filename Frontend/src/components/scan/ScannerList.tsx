@@ -42,6 +42,11 @@ const scanners: ScannerItem[] = [
     name: "Wappalyzer",
     description: "Tech stack detection & fingerprinting.",
   },
+  {
+    id: "nessus",
+    name: "Nessus",
+    description: "The industry standard for vulnerability assessment and compliance auditing.",
+  },
 ];
 
 interface Props {

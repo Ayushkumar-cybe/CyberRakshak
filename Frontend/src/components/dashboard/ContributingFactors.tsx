@@ -7,6 +7,7 @@ import {
   Tooltip,
   Legend,
 } from "recharts";
+import CardHeader from "./CardHeader";
 
 const data = [
   { name: "Unpatched Software", value: 38, color: "#ef4444" },  // red
@@ -18,7 +19,10 @@ const data = [
 const ContributingFactors = () => {
   return (
     <div className="w-full h-full">
-      <h3 className="text-lg font-semibold mb-4">Contributing Factors</h3>
+      <CardHeader
+        title="Contributing Factors"
+        tooltip="Primary factors contributing to overall security risk, showing percentage breakdown of root causes."
+      />
 
       <div className="w-full h-48">
         <ResponsiveContainer>
