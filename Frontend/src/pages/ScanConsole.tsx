@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import ScanTargetPanel from "../components/scan/ScanTargetPanel";
 import ScanHistory from "../components/scan/ScanHistory";
 import ScannerList from "../components/scan/ScannerList";
 import ScannerConfigDrawer from "../components/scan/ScannerConfigDrawer";
-import LogTerminal from "../components/scan/LogTerminal";
 import { startScan, getScanStatus } from "../services/api";
 
 interface ActiveScan {
@@ -15,15 +13,15 @@ interface ActiveScan {
   progress: number;
   jobId?: string;
   startTime: Date;
+  toolStatus: Record<string, string>; // Track status of individual tools
 }
-
-type ScanProfile = "quick" | "deep" | "custom";
 
 const ScanConsole = () => {
   const navigate = useNavigate();
+  
   // DEFAULT: Nmap selected by default
   const [selectedScanners, setSelectedScanners] = useState<Record<string, boolean>>({
-    nmap: true, // DEFAULT SELECTION
+    nmap: true, 
     nuclei: false,
     zap: false,
     nikto: false,
@@ -38,14 +36,11 @@ const ScanConsole = () => {
   const [target, setTarget] = useState("");
   const [targetError, setTargetError] = useState<string | null>(null);
   const [activeScans, setActiveScans] = useState<ActiveScan[]>([]);
-  const [logs, setLogs] = useState<string[]>([]);
-  const [historyKey, setHistoryKey] = useState(0);
-  const [scanProfile, setScanProfile] = useState<ScanProfile>("quick");
+  const [historyKey, setHistoryKey] = useState(0); // Force refresh history
 
-  // --- NEW: Notification State ---
+  // Notification State
   const [notifyEmail, setNotifyEmail] = useState(false);
   const [emailList, setEmailList] = useState("");
-  // -------------------------------
 
   // Validations
   const isValidIp = (value: string) => {
@@ -64,30 +59,12 @@ const ScanConsole = () => {
       return false;
     }
     if (!(isValidIp(value) || isValidDomain(value))) {
-      setTargetError("Enter a valid IPv4 address or domain (e.g., 192.168.1.1 or scanme.nmap.org).");
+      setTargetError("Enter a valid IPv4 address or domain.");
       return false;
     }
     setTargetError(null);
     return true;
   };
-
-  // Apply scan profile settings
-  useEffect(() => {
-    if (scanProfile === "quick") {
-      // Quick Scan: Nmap with -T4 -F arguments
-      setScannerConfigs((prev) => ({
-        ...prev,
-        nmap: { args: "-T4 -F" },
-      }));
-    } else if (scanProfile === "deep") {
-      // Deep Audit: Nmap with -A -p- arguments
-      setScannerConfigs((prev) => ({
-        ...prev,
-        nmap: { args: "-A -p-" },
-      }));
-    }
-    // Custom: Keep existing configs
-  }, [scanProfile]);
 
   const buildScanPayload = () => {
     const scannersPayload: Record<string, any> = {};
@@ -100,7 +77,6 @@ const ScanConsole = () => {
       }
     });
 
-    // --- NEW: Include Email Config ---
     return { 
       target, 
       scanners: scannersPayload,
@@ -109,75 +85,71 @@ const ScanConsole = () => {
     };
   };
 
-  // Progress simulation and polling for each active scan
+  // POLLING & PROGRESS TRACKING
   useEffect(() => {
-    const intervals: Record<string, ReturnType<typeof setInterval>> = {};
+    const interval = setInterval(() => {
+      setActiveScans((currentScans) => {
+        // Only update scans that are actively running
+        const active = currentScans.filter(s => s.status === "running" || s.status === "pending");
+        if (active.length === 0) return currentScans;
 
-    activeScans.forEach((scan) => {
-      if (scan.status !== "completed" && scan.status !== "failed") {
-        // Progress simulation
-        const progressInterval = setInterval(() => {
-          setActiveScans((prev) =>
-            prev.map((s) => {
-              if (s.id === scan.id && s.progress < 100) {
-                const newProgress = Math.min(s.progress + Math.random() * 3, 100);
-                let newStatus: "pending" | "running" | "completed" | "failed" = s.status;
-                
-                if (newProgress >= 100) {
-                  newStatus = "completed";
-                } else if (newProgress > 10) {
-                  newStatus = "running";
-                }
+        // Clone state to modify
+        const updatedScans = [...currentScans];
 
-                return { ...s, progress: newProgress, status: newStatus };
+        active.forEach(async (scan) => {
+          if (!scan.jobId) return;
+
+          try {
+            const statusData = await getScanStatus(scan.jobId);
+            
+            // Find scan in local state
+            const index = updatedScans.findIndex(s => s.id === scan.id);
+            if (index === -1) return;
+
+            const backendStatus = statusData.status;
+            const toolStatus = statusData.tool_status || {};
+
+            // Calculate progress based on how many tools are "completed" or "failed"
+            const totalTools = scan.tools.length;
+            let completedTools = 0;
+            
+            Object.entries(toolStatus).forEach(([tool, status]) => {
+              if (status === "completed" || status === "failed") {
+                completedTools++;
               }
-              return s;
-            })
-          );
-        }, 200);
+            });
 
-        intervals[scan.id] = progressInterval;
+            // Calculate percentage
+            const newProgress = totalTools > 0 ? Math.round((completedTools / totalTools) * 100) : 0;
 
-        // Poll real status if jobId exists
-        if (scan.jobId) {
-          const pollInterval = setInterval(async () => {
-            try {
-              const statusData = await getScanStatus(scan.jobId!);
-              if (["completed", "failed", "partial_success"].includes(statusData.status)) {
-                setActiveScans((prev) =>
-                  prev.map((s) => {
-                    if (s.id === scan.id) {
-                      const completed: ActiveScan = { 
-                        ...s, 
-                        status: statusData.status === "failed" ? "failed" : "completed" as "pending" | "running" | "completed" | "failed", 
-                        progress: 100 
-                      };
-                      // Move to history after a delay
-                      setTimeout(() => {
-                        setActiveScans((prev) => prev.filter((scan) => scan.id !== s.id));
-                        setHistoryKey((prev) => prev + 1);
-                      }, 2000);
-                      return completed;
-                    }
-                    return s;
-                  })
-                );
-                clearInterval(pollInterval);
-              }
-            } catch (error) {
-              console.error("Poll error:", error);
+            updatedScans[index] = {
+              ...updatedScans[index],
+              status: backendStatus as any,
+              progress: newProgress,
+              toolStatus: toolStatus as any
+            };
+
+            // If completely finished, trigger history refresh
+            if (["completed", "failed", "partial_success"].includes(backendStatus)) {
+              setHistoryKey(prev => prev + 1);
+              
+              // Remove from active view after 3 seconds
+              setTimeout(() => {
+                setActiveScans(prev => prev.filter(s => s.id !== scan.id));
+              }, 3000);
             }
-          }, 2000);
 
-          intervals[`poll-${scan.id}`] = pollInterval;
-        }
-      }
-    });
+          } catch (error) {
+            console.error("Poll failed:", error);
+          }
+        });
 
-    return () => {
-      Object.values(intervals).forEach((interval) => clearInterval(interval));
-    };
-  }, [activeScans]);
+        return updatedScans;
+      });
+    }, 2000); // Poll every 2 seconds
+
+    return () => clearInterval(interval);
+  }, []);
 
   const handleRunScan = async () => {
     if (!validateTarget(target)) return;
@@ -189,7 +161,7 @@ const ScanConsole = () => {
       return;
     }
 
-    const scanId = `scan-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const scanId = `scan-${Date.now()}`;
     const newScan: ActiveScan = {
       id: scanId,
       target,
@@ -197,45 +169,36 @@ const ScanConsole = () => {
       status: "pending",
       progress: 0,
       startTime: new Date(),
+      toolStatus: {}
     };
 
     setActiveScans((prev) => [...prev, newScan]);
 
     try {
       const response = await startScan(payload);
+      // Update with real Job ID
       setActiveScans((prev) =>
         prev.map((s) => (s.id === scanId ? { ...s, jobId: response.job_id, status: "running" } : s))
       );
-      // Reset target after starting scan
-      setTarget("");
+      setTarget(""); // Clear input
     } catch (err: any) {
       console.error(err);
-      const errorMsg = err.message || "Unknown error";
       setActiveScans((prev) =>
-        prev.map((s) =>
-          s.id === scanId ? { ...s, status: "failed", progress: 100 } : s
-        )
+        prev.map((s) => (s.id === scanId ? { ...s, status: "failed", progress: 100 } : s))
       );
-      alert(`Failed to start scan: ${errorMsg}`);
+      alert(`Failed to start scan: ${err.message}`);
     }
   };
 
   const handleStopScan = (scanId: string) => {
-    setActiveScans((prev) =>
-      prev.map((s) => (s.id === scanId ? { ...s, status: "failed", progress: 100 } : s))
-    );
+    setActiveScans((prev) => prev.filter(s => s.id !== scanId));
   };
 
   const toggleScanner = (id: string) => {
     setSelectedScanners((prev) => ({ ...prev, [id]: !prev[id] }));
-    // Auto-switch to custom when manually changing scanners
-    setScanProfile("custom");
   };
 
-  const openConfigDrawer = (id: string) => {
-    setDrawerScanner(id);
-  };
-
+  const openConfigDrawer = (id: string) => setDrawerScanner(id);
   const saveScannerConfig = (id: string, config: any) => {
     setScannerConfigs((prev) => ({ ...prev, [id]: config }));
   };
@@ -256,21 +219,9 @@ const ScanConsole = () => {
           </div>
 
           <div className="col-span-2 bg-white dark:bg-slate-800 rounded-xl shadow p-6">
-            {/* Scan Profile Dropdown */}
+            
+            {/* Target Input Section - Now at the top */}
             <div className="space-y-2 mb-4">
-              <label className="font-medium text-sm">Scan Profile</label>
-              <select
-                value={scanProfile}
-                onChange={(e) => setScanProfile(e.target.value as ScanProfile)}
-                className="w-full p-2 rounded-lg border bg-slate-50 dark:bg-slate-900/40 text-slate-900 dark:text-slate-100 border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="quick">Quick Scan (-T4 -F)</option>
-                <option value="deep">Deep Audit (-A -p-)</option>
-                <option value="custom">Custom</option>
-              </select>
-            </div>
-
-            <div className="space-y-2">
               <label className="font-medium text-sm">Target</label>
               <input
                 type="text"
@@ -280,7 +231,7 @@ const ScanConsole = () => {
                   setTarget(value);
                   if (value.length > 0) validateTarget(value);
                 }}
-                placeholder="Enter IP / Domain (example: 192.168.1.1, scanme.nmap.org)"
+                placeholder="Enter IP / Domain (e.g. 192.168.1.1, scanme.nmap.org)"
                 className={`
                   w-full p-2 rounded-lg border
                   bg-slate-50 dark:bg-slate-900/40 text-slate-900 dark:text-slate-100
@@ -293,8 +244,8 @@ const ScanConsole = () => {
               {targetError && <p className="text-xs text-red-400">{targetError}</p>}
             </div>
 
-            {/* --- NEW: Email Notification UI --- */}
-            <div className="mt-4 p-4 bg-slate-50 dark:bg-slate-900/50 rounded-lg border border-slate-200 dark:border-slate-700">
+            {/* Email Notification Section */}
+            <div className="p-4 bg-slate-50 dark:bg-slate-900/50 rounded-lg border border-slate-200 dark:border-slate-700">
               <div className="flex items-center gap-2 mb-2">
                 <input 
                   type="checkbox" 
@@ -304,32 +255,31 @@ const ScanConsole = () => {
                 />
                 <label className="text-sm font-semibold">Email Notification</label>
               </div>
-              
               {notifyEmail && (
                 <input
                   type="text"
                   value={emailList}
                   onChange={(e) => setEmailList(e.target.value)}
                   placeholder="Enter emails (comma separated)..."
-                  className="w-full p-2 text-sm rounded border bg-white dark:bg-slate-800"
+                  className="w-full p-2 text-sm rounded border bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600"
                 />
               )}
             </div>
-            {/* ---------------------------------- */}
 
             <button
               disabled={!canRunScan}
               onClick={handleRunScan}
               className={`
-                px-4 py-2 rounded-lg text-sm font-semibold mt-4
+                px-4 py-2 rounded-lg text-sm font-semibold mt-4 w-full
                 ${canRunScan
                   ? "bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
                   : "bg-slate-500 text-slate-300 cursor-not-allowed"}
               `}
             >
-              Run Scan
+              Start Scan
             </button>
 
+            {/* LIVE OPERATIONS PANEL */}
             <div className="mt-6">
               <h2 className="font-semibold mb-2">Live Operations</h2>
               {activeScans.length === 0 ? (
@@ -349,25 +299,43 @@ const ScanConsole = () => {
                             {scan.target}
                           </span>
                           <span className="text-xs text-slate-500 dark:text-slate-400 ml-2">
-                            - {scan.tools.join(", ")}
+                            - {scan.status.toUpperCase()}
                           </span>
                         </div>
                         <button
                           onClick={() => handleStopScan(scan.id)}
                           className="text-xs text-red-500 hover:text-red-600 font-medium px-2 py-1"
                         >
-                          Stop
+                          Clear
                         </button>
                       </div>
-                      <div className="w-full h-1 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden mb-1">
+                      
+                      {/* Overall Progress */}
+                      <div className="w-full h-1 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden mb-3">
                         <div
-                          className="h-full bg-blue-500 transition-all duration-300"
+                          className={`h-full transition-all duration-300 ${
+                            scan.status === 'failed' ? 'bg-red-500' : 'bg-blue-500'
+                          }`}
                           style={{ width: `${scan.progress}%` }}
                         ></div>
                       </div>
-                      <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                        <span className="capitalize">{scan.status}</span>
-                        <span>{Math.round(scan.progress)}%</span>
+
+                      {/* Individual Tool Status */}
+                      <div className="flex flex-wrap gap-2">
+                        {scan.tools.map((tool) => {
+                          const status = scan.toolStatus?.[tool] || "pending";
+                          let color = "bg-slate-300 dark:bg-slate-600"; // Pending
+                          if (status === "running") color = "bg-blue-500 animate-pulse";
+                          if (status === "completed") color = "bg-green-500";
+                          if (status === "failed") color = "bg-red-500";
+
+                          return (
+                            <div key={tool} className="flex items-center gap-1 text-[10px] bg-white dark:bg-slate-800 px-2 py-1 rounded border border-slate-200 dark:border-slate-700">
+                              <div className={`w-2 h-2 rounded-full ${color}`}></div>
+                              <span className="capitalize">{tool}</span>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   ))}

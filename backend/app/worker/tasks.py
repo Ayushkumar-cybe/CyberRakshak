@@ -13,7 +13,13 @@ from app.models import Job, JobStatus, Notification
 from typing import List, Dict, Any, Optional
 from app.parsers import parse_nmap, parse_nuclei, parse_nikto, parse_zap, parse_wappalyzer, parse_metasploit, parse_openvas
 from app.enrichment import get_cisa_kev_data, enrich_vulnerability
-from app.utils.email import send_scan_email
+from app.utils.nvd_sync import sync_nvd
+from app.utils.exploitdb import sync_exploitdb
+from app.utils.cisa_sync import sync_cisa_kev
+
+# --- FIX: Updated Import ---
+from app.utils.mailer import send_scan_email 
+
 from app.reporting import generate_pdf_report
 from app.graph import generate_graph_image
 
@@ -37,7 +43,8 @@ def update_tool_status(job_id: uuid.UUID, tool_name: str, status: str):
             session.add(job)
             session.commit()
 
-# --- SCANNERS ---
+# ... [KEEP ALL SCANNER FUNCTIONS: run_nmap, run_nuclei, etc.] ...
+# ... [No changes needed to scanner functions themselves] ...
 
 def run_nmap(target: str, host_dir: str, internal_dir: str, config: Dict[str, Any]) -> Optional[str]:
     print(f"Starting Nmap for {target}...")
@@ -380,11 +387,9 @@ def run_scan_task(self, job_id: str, scanners: Dict[str, Any]):
         job.output_files = output_paths
         job.normalized_report = normalized_data
         
-        # --- FIX: SAVE TO DB NOW so the API can see the data for Graph Generation! ---
         session.add(job)
         session.commit()
         session.refresh(job)
-        # -----------------------------------------------------------------------------
         
         # --- NOTIFICATIONS & EMAILS ---
         try:
@@ -407,7 +412,6 @@ def run_scan_task(self, job_id: str, scanners: Dict[str, Any]):
 
                 graph_path = os.path.join(internal_dir, f"graph_{job_id}.png")
                 try:
-                    # Now this works because we saved the job to DB above
                     generate_graph_image(str(job.id), graph_path)
                 except Exception as e: 
                     print(f"Graph Gen Error: {e}")
@@ -427,3 +431,28 @@ def run_scan_task(self, job_id: str, scanners: Dict[str, Any]):
             print(f"Notification Error: {e}")
         
         return {"status": job.status, "files": output_paths}
+
+@celery_app.task
+def sync_threat_intel_task():
+    """
+    Background task to sync NVD vulnerabilities.
+    Runs automatically via Celery Beat.
+    """
+    print("--- Starting Scheduled NVD Sync ---")
+    # Sync last 2 days to ensure we catch everything recent
+    sync_nvd(days_back=2)
+    print("--- Scheduled NVD Sync Completed ---")
+
+@celery_app.task
+def sync_exploitdb_task():
+    """
+    Background task to sync ExploitDB data.
+    """
+    sync_exploitdb()
+
+@celery_app.task
+def sync_cisa_task():
+    """
+    Background task to sync CISA KEV data.
+    """
+    sync_cisa_kev()
