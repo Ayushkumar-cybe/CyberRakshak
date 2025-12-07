@@ -175,7 +175,7 @@ export const startScan = async (request: ScanStartRequest): Promise<ScanStartRes
 };
 
 export const getScanStatus = async (jobId: string): Promise<ScanStatusResponse> => {
-  return apiCall<ScanStatusResponse>(`/scan/status/${jobId}`);
+  return apiCall<ScanStatusResponse>(`/scan/status/${jobId}?include_results=false`);
 };
 
 export const getScanGraph = async (jobId: string): Promise<any> => {
