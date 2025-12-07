@@ -1,11 +1,9 @@
 import React from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
+import CardHeader from "./CardHeader";
 
-interface Props {
-  score: number;
-}
-
-const GlobalRiskScore = ({ score }: Props) => {
+const GlobalRiskScore = () => {
+  const score = 742;
 
   const data = [
     { name: "score", value: score },
@@ -16,7 +14,10 @@ const GlobalRiskScore = ({ score }: Props) => {
 
   return (
     <div className="relative flex flex-col items-center justify-center h-full">
-      <h3 className="text-lg font-semibold mb-4">Global Cyber Risk Score</h3>
+      <CardHeader
+        title="Global Cyber Risk Score"
+        tooltip="Dynamic score (0-1000) calculated from active vulnerabilities, asset criticality, and threat intel."
+      />
 
       <div className="w-[200px] h-[200px] relative">
         <ResponsiveContainer>

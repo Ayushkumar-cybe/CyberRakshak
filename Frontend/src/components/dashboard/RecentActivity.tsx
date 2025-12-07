@@ -1,5 +1,11 @@
-import React, { useEffect, useState } from "react";
-import { getJobHistory } from "../../services/api";
+import React from "react";
+import CardHeader from "./CardHeader";
+
+const recentScans = [
+  { tool: "Nmap", target: "172.31.54.21", status: "Completed", color: "green" },
+  { tool: "Nuclei", target: "vuln.app.in", status: "High Risk", color: "red" },
+  { tool: "OpenVAS", target: "10.0.0.14", status: "Running", color: "orange" },
+];
 
 const alerts = [
   { msg: "Critical vulnerability found on app.gov.in", level: "Critical", color: "red" },
@@ -8,32 +14,12 @@ const alerts = [
 ];
 
 const RecentActivity = () => {
-  const [recentScans, setRecentScans] = useState<any[]>([]);
-
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        // Fetch the 3 most recent jobs to match the UI layout
-        const jobs = await getJobHistory(0, 3);
-        
-        const mapped = jobs.map((j: any) => ({
-          tool: j.scanners_used.join(", ") || "Unknown Scanner",
-          target: j.target,
-          status: j.status,
-          // Map status to color for the Tailwind class `bg-{color}-500`
-          color: j.status === "completed" ? "green" : j.status === "failed" ? "red" : "orange"
-        }));
-        setRecentScans(mapped);
-      } catch (e) {
-        console.error("Failed to fetch recent activity:", e);
-      }
-    };
-    fetchData();
-  }, []);
-
   return (
     <div className="w-full h-full flex flex-col">
-      <h3 className="text-lg font-semibold mb-4">Recent Scans & Alerts</h3>
+      <CardHeader
+        title="Recent Scans & Alerts"
+        tooltip="Latest security scan executions and real-time security alerts from monitoring systems."
+      />
 
       <div className="grid grid-cols-1 gap-4">
 
@@ -41,10 +27,6 @@ const RecentActivity = () => {
         <div>
           <h4 className="font-semibold mb-2">Recent Scans</h4>
           <div className="space-y-2">
-            {recentScans.length === 0 && (
-              <p className="text-sm opacity-50 p-3">No recent scans found.</p>
-            )}
-
             {recentScans.map((item, index) => (
               <div
                 key={index}

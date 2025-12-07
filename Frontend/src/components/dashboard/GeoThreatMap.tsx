@@ -1,17 +1,21 @@
 import React from "react";
+import CardHeader from "./CardHeader";
 
 const GeoThreatMap = () => {
   return (
-    <div className="w-full h-full">
-      <h3 className="text-lg font-semibold mb-4">Geographic Threat Map</h3>
+    <div className="w-full h-full flex flex-col">
+      <CardHeader
+        title="Geographic Threat Map"
+        tooltip="Real-time visualization of threat activity and attack origins mapped by geographic location."
+      />
 
-      <div className="relative w-full h-72 rounded-xl overflow-hidden bg-slate-200 dark:bg-slate-800">
-
+      <div className="relative w-full flex-grow rounded-xl overflow-hidden bg-slate-200 dark:bg-slate-800 min-h-[280px]">
         {/* SIMPLE STATIC MAP FOR NOW */}
         <img
           src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/80/World_map_-_low_resolution.svg/2000px-World_map_-_low_resolution.svg.png"
           alt="world-map"
           className="w-full h-full object-cover opacity-70 dark:opacity-50"
+          style={{ transform: 'scale(1.2)' }}
         />
 
         {/* ATTACK MARKERS */}

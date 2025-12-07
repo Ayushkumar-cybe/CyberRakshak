@@ -1,13 +1,75 @@
 import React, { useState, useEffect } from "react";
 import { Bell, Sun, Moon, User } from "lucide-react";
+import { useLocation } from "react-router-dom";
 import { getNotifications, markNotificationRead } from "../../services/api";
 import type { Notification } from "../../services/api";
 
 
 const Topbar = () => {
+  const location = useLocation();
   const [darkMode, setDarkMode] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
+
+  // Route mapping for dynamic titles and subtitles
+  const routeMapping: Record<string, { title: string; subtitle: string }> = {
+    "/": { 
+      title: "Command Center", 
+      subtitle: "Overview of security posture & active threats." 
+    },
+    "/scan-console": { 
+      title: "Scan Console", 
+      subtitle: "Initiate and manage vulnerability scans." 
+    },
+    "/assets": { 
+      title: "Asset Inventory", 
+      subtitle: "View and manage all discovered assets." 
+    },
+    "/vulnerabilities": { 
+      title: "Vulnerabilities", 
+      subtitle: "Explore and analyze detected risks." 
+    },
+    "/attack-path": { 
+      title: "Attack Path Analysis", 
+      subtitle: "Visualize exploit chains and high-risk routes." 
+    },
+    "/threat-intel": { 
+      title: "Threat Intelligence", 
+      subtitle: "Real-time feed of global vulnerabilities." 
+    },
+    "/reports": { 
+      title: "Reports", 
+      subtitle: "Centralized repository for audits and summaries." 
+    },
+    "/remediation": { 
+      title: "Remediation Operations", 
+      subtitle: "Automated defense console." 
+    },
+    "/audit-logs": { 
+      title: "Audit Logs", 
+      subtitle: "System activity and user actions." 
+    },
+    "/settings": { 
+      title: "Settings", 
+      subtitle: "Platform configuration and preferences." 
+    }
+  };
+
+  // Get current route info
+  const getCurrentRouteInfo = () => {
+    // Check for exact match first
+    if (routeMapping[location.pathname]) {
+      return routeMapping[location.pathname];
+    }
+    
+    // Default fallback
+    return { 
+      title: "Dashboard", 
+      subtitle: "Security overview and analytics" 
+    };
+  };
+
+  const currentRouteInfo = getCurrentRouteInfo();
 
   const toggleTheme = () => {
     setDarkMode(!darkMode);
@@ -44,9 +106,14 @@ const Topbar = () => {
 
   return (
     <header className="h-16 bg-white dark:bg-slate-950 border-b dark:border-slate-800 flex items-center justify-between px-6 sticky top-0 z-40">
-      {/* Left: Branding (if Sidebar collapsed) or Breadcrumbs */}
-      <div className="font-bold text-lg text-slate-700 dark:text-white">
-        Dashboard
+      {/* Left: Dynamic Title and Subtitle */}
+      <div>
+        <h1 className="text-lg font-semibold text-slate-900 dark:text-white">
+          {currentRouteInfo.title}
+        </h1>
+        <p className="text-xs text-slate-500 dark:text-slate-400 hidden md:block">
+          {currentRouteInfo.subtitle}
+        </p>
       </div>
 
       {/* Right: Actions */}
