@@ -233,14 +233,23 @@ def start_scan(
 @router.get("/scan/status/{job_id}", response_model=ScanStatusResponse)
 def get_scan_status(
     job_id: uuid.UUID, 
+    include_results: bool = False, # <--- NEW PARAMETER
     session: Session = Depends(get_session),
-    user: User = Depends(get_current_user) # <--- Protected
+    user: User = Depends(get_current_user)
 ):
     job = session.get(Job, job_id)
     if not job: raise HTTPException(status_code=404, detail="Job not found")
+    
+    # OPTIMIZATION: Only return heavy 'results' if explicitly requested.
+    # This prevents the UI polling from downloading 10MB+ reports every 2 seconds.
     return ScanStatusResponse(
-        job_id=job.id, status=job.status, target=job.target, created_at=str(job.created_at),
-        scanners_requested=job.scanners_requested, tool_status=job.tool_status, results=job.normalized_report 
+        job_id=job.id, 
+        status=job.status, 
+        target=job.target, 
+        created_at=str(job.created_at),
+        scanners_requested=job.scanners_requested, 
+        tool_status=job.tool_status, 
+        results=job.normalized_report if include_results else None 
     )
 
 @router.get("/scan/logs", tags=["Audit"])
