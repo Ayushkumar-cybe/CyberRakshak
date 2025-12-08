@@ -1,9 +1,13 @@
 import React from "react";
+import CardHeader from "./CardHeader";
 
 const AiInsightsPanel = () => {
   return (
     <div className="w-full h-full">
-      <h3 className="text-lg font-semibold mb-3">AI Insights</h3>
+      <CardHeader
+        title="AI Insights"
+        tooltip="Machine learning-generated insights and recommendations based on aggregated security data analysis."
+      />
 
       <div className="p-6 rounded-xl bg-slate-100 dark:bg-slate-800 shadow space-y-4 text-sm">
 

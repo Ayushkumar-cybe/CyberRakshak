@@ -1,5 +1,7 @@
-import React, { useEffect, useState } from "react";
-import { getJobHistory } from "../../services/api";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { FileText, Activity } from "lucide-react";
+import { getJobHistory, getScanReport } from "../../services/api";
 
 interface ScanJob {
   job_id: string;
@@ -7,6 +9,7 @@ interface ScanJob {
   status: string;
   created_at: string;
   scanners_used: string[];
+  risk?: string;
 }
 
 const statusColors: Record<string, string> = {
@@ -17,7 +20,16 @@ const statusColors: Record<string, string> = {
   partial_success: "bg-orange-500",
 };
 
+const riskColors: Record<string, string> = {
+  Critical: "text-red-500",
+  High: "text-orange-500",
+  Medium: "text-yellow-500",
+  Low: "text-blue-500",
+  "N/A": "text-gray-500",
+};
+
 const ScanHistory = () => {
+  const navigate = useNavigate();
   const [history, setHistory] = useState<ScanJob[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -26,7 +38,8 @@ const ScanHistory = () => {
       try {
         const data = await getJobHistory();
         // @ts-ignore
-        setHistory(data);
+        const fetchedHistory = Array.isArray(data) && data.length > 0 ? data : [];
+        setHistory(fetchedHistory);
       } catch (error) {
         console.error("Failed to fetch scan history:", error);
       } finally {
@@ -36,6 +49,35 @@ const ScanHistory = () => {
 
     fetchHistory();
   }, []);
+
+  const handleReportClick = async (jobId: string) => {
+    try {
+      const blob = await getScanReport(jobId);
+      
+      if (blob.type === 'application/json') {
+        alert("Report is not ready yet or generation failed.");
+        return;
+      }
+
+      const url = window.URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      
+      setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      console.error("Failed to open report:", error);
+      alert("Could not load report. Please try again later.");
+    }
+  };
+
+  const handleGraphClick = (jobId: string) => {
+    navigate(`/attack-path?job_id=${jobId}`);
+  };
+
+  // UPDATED: Show full Date and Time string
+  const formatDate = (dateString: string) => {
+    if (!dateString) return "N/A";
+    return new Date(dateString).toLocaleString(); // e.g. "12/7/2025, 4:30:00 PM"
+  };
 
   if (loading) {
     return (
@@ -56,23 +98,35 @@ const ScanHistory = () => {
               <th className="p-3">Target</th>
               <th className="p-3">Tools</th>
               <th className="p-3">Status</th>
-              <th className="p-3">Date</th>
-              <th className="p-3">Action</th>
+              <th className="p-3">Risk</th>
+              <th className="p-3">Start Time</th>
+              <th className="p-3">Actions</th>
             </tr>
           </thead>
 
           <tbody>
             {history.length === 0 ? (
               <tr>
-                <td colSpan={5} className="p-6 text-center opacity-60">
+                <td colSpan={6} className="p-6 text-center opacity-60">
                   No scans found. Start a scan above!
                 </td>
               </tr>
             ) : (
               history.map((item) => (
-                <tr key={item.job_id} className="border-b dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
-                  <td className="p-3 font-medium">{item.target}</td>
+                <tr 
+                  key={item.job_id} 
+                  className="border-b dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors"
+                >
                   <td className="p-3">
+                    <div 
+                      className="flex items-center gap-3 text-cyan-400 font-medium hover:underline hover:text-cyan-300 transition-colors cursor-pointer"
+                      onClick={() => handleReportClick(item.job_id)}
+                    >
+                      <FileText size={16} />
+                      <span>{item.target}</span>
+                    </div>
+                  </td>
+                  <td className="p-3 opacity-80">
                     {item.scanners_used && item.scanners_used.length > 0 
                       ? item.scanners_used.join(", ") 
                       : "Unknown"}
@@ -86,31 +140,26 @@ const ScanHistory = () => {
                       {item.status.toUpperCase()}
                     </span>
                   </td>
-                  <td className="p-3 opacity-80">
-                    {new Date(item.created_at).toLocaleString()}
+                  <td className="p-3">
+                    <span className={riskColors[item.risk || "N/A"] || "text-gray-500"}>
+                      {item.risk || "N/A"}
+                    </span>
                   </td>
-                  <td className="p-3 flex gap-2">
-                    <a 
-                      href={`/reports?job=${item.job_id}`}
-                      className="px-3 py-1 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 inline-block"
+                  <td className="p-3 opacity-80 whitespace-nowrap">
+                    {formatDate(item.created_at)}
+                  </td>
+                  <td className="p-3">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleGraphClick(item.job_id);
+                      }}
+                      className="text-gray-400 hover:text-cyan-400 transition-colors p-1"
+                      title="View Attack Graph"
                     >
-                      Report
-                    </a>
-                    {/* NEW BUTTON */}
-                    <a 
-                      href={`/attack-path?job_id=${item.job_id}`}
-                      className="px-3 py-1 text-xs bg-purple-600 text-white rounded-md hover:bg-purple-700 inline-block"
-                    >
-                      Graph
-                    </a>
-                  {/* --- NEW BUTTON --- */}
-                    <a 
-                      href={`/remediation?job_id=${item.job_id}`}
-                      className="px-3 py-1 text-xs bg-green-600 text-white rounded-md hover:bg-green-700 inline-block"
-                    >
-                      Fix
-                    </a>
-		  </td>
+                      <Activity size={18} />
+                    </button>
+                  </td>
                 </tr>
               ))
             )}

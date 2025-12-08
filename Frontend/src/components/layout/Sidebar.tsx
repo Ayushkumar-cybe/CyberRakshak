@@ -9,10 +9,11 @@ import {
   FileText, 
   ClipboardCheck, 
   MessageCircle, 
-  Settings, 
-  User,
   Activity 
 } from "lucide-react";
+
+// Import the logo
+import logo from '../../assets/indian logo.png';
 
 const menu = [
   { path: "/", label: "Dashboard", icon: Home },
@@ -24,9 +25,7 @@ const menu = [
   { path: "/reports", label: "Reports", icon: FileText },
   { path: "/remediation", label: "Remediation", icon: ClipboardCheck },
   { path: "/assistant", label: "Chat Assistant", icon: MessageCircle },
-  { path: "/audit-logs", label: "Audit Logs", icon: Activity }, // <--- Added here
-  { path: "/settings", label: "Settings", icon: Settings },
-  { path: "/profile", label: "Profile", icon: User },
+  { path: "/audit-logs", label: "Audit Logs", icon: Activity },
 ];
 
 const Sidebar = () => {
@@ -39,8 +38,12 @@ const Sidebar = () => {
       className={`bg-white dark:bg-slate-950 shadow-md h-screen transition-all duration-300 flex flex-col 
       ${collapsed ? "w-16" : "w-64"}`}
     >
-      <div className="h-16 flex items-center justify-center border-b text-xl font-bold">
-        {collapsed ? "CR" : "CyberRakshak"}
+      <div className="h-20 flex items-center justify-center py-6">
+        <img 
+          src={logo} 
+          alt="CyberRakshak Logo" 
+          className="w-14 h-14 object-contain"
+        />
       </div>
 
       <nav className="flex-1 overflow-y-auto">

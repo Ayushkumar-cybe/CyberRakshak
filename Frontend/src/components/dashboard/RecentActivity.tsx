@@ -1,66 +1,64 @@
-import React, { useEffect, useState } from "react";
-import { getJobHistory } from "../../services/api";
+import React from "react";
+import CardHeader from "./CardHeader";
 
-const alerts = [
-  { msg: "Critical vulnerability found on app.gov.in", level: "Critical", color: "red" },
-  { msg: "Suspicious login attempt from Russia", level: "High", color: "orange" },
-  { msg: "New CVE added: CVE-2025-12134", level: "Medium", color: "yellow" },
-];
+// Added Props
+interface Props {
+  recentScans?: Array<{ tool: string; target: string; status: string }>;
+}
 
-const RecentActivity = () => {
-  const [recentScans, setRecentScans] = useState<any[]>([]);
+const RecentActivity = ({ recentScans }: Props) => {
+  // Default/Mock data if none provided
+  const scans = recentScans && recentScans.length > 0 ? recentScans : [
+    { tool: "Nmap", target: "172.31.54.21", status: "Completed" },
+    { tool: "Nuclei", target: "vuln.app.in", status: "High Risk" },
+    { tool: "OpenVAS", target: "10.0.0.14", status: "Running" },
+  ];
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        // Fetch the 3 most recent jobs to match the UI layout
-        const jobs = await getJobHistory(0, 3);
-        
-        const mapped = jobs.map((j: any) => ({
-          tool: j.scanners_used.join(", ") || "Unknown Scanner",
-          target: j.target,
-          status: j.status,
-          // Map status to color for the Tailwind class `bg-{color}-500`
-          color: j.status === "completed" ? "green" : j.status === "failed" ? "red" : "orange"
-        }));
-        setRecentScans(mapped);
-      } catch (e) {
-        console.error("Failed to fetch recent activity:", e);
-      }
-    };
-    fetchData();
-  }, []);
+  const alerts = [
+    { msg: "Critical vulnerability found on app.gov.in", level: "Critical", color: "red" },
+    { msg: "Suspicious login attempt from Russia", level: "High", color: "orange" },
+    { msg: "New CVE added: CVE-2025-12134", level: "Medium", color: "yellow" },
+  ];
+
+  const getStatusColor = (status: string) => {
+    const s = status.toLowerCase();
+    if (s.includes("complete")) return "green";
+    if (s.includes("fail") || s.includes("risk")) return "red";
+    if (s.includes("run")) return "orange";
+    return "blue";
+  };
 
   return (
     <div className="w-full h-full flex flex-col">
-      <h3 className="text-lg font-semibold mb-4">Recent Scans & Alerts</h3>
+      <CardHeader
+        title="Recent Scans & Alerts"
+        tooltip="Latest security scan executions and real-time security alerts from monitoring systems."
+      />
 
       <div className="grid grid-cols-1 gap-4">
-
         {/* RECENT SCANS */}
         <div>
           <h4 className="font-semibold mb-2">Recent Scans</h4>
           <div className="space-y-2">
-            {recentScans.length === 0 && (
-              <p className="text-sm opacity-50 p-3">No recent scans found.</p>
-            )}
-
-            {recentScans.map((item, index) => (
-              <div
-                key={index}
-                className="flex items-center justify-between p-3 rounded-xl bg-slate-100 dark:bg-slate-800"
-              >
-                <div>
-                  <p className="font-semibold">{item.tool}</p>
-                  <p className="text-sm opacity-70">{item.target}</p>
-                </div>
-                <span
-                  className={`px-3 py-1 rounded-full text-sm text-white bg-${item.color}-500`}
+            {scans.map((item, index) => {
+              const color = getStatusColor(item.status);
+              return (
+                <div
+                  key={index}
+                  className="flex items-center justify-between p-3 rounded-xl bg-slate-100 dark:bg-slate-800"
                 >
-                  {item.status}
-                </span>
-              </div>
-            ))}
+                  <div className="overflow-hidden">
+                    <p className="font-semibold truncate">{item.tool}</p>
+                    <p className="text-sm opacity-70 truncate">{item.target}</p>
+                  </div>
+                  <span
+                    className={`px-3 py-1 rounded-full text-sm text-white bg-${color}-500 whitespace-nowrap`}
+                  >
+                    {item.status}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -80,7 +78,6 @@ const RecentActivity = () => {
             ))}
           </div>
         </div>
-
       </div>
     </div>
   );

@@ -1,10 +1,14 @@
 // API Service Layer for CyberRakshak Frontend
+
+// Use relative path so it works with Nginx (Port 80) or direct (if proxied)
 const API_BASE_URL = '/api';
 
 interface ScanStartRequest {
   target: string;
   scanners?: Record<string, any>;
   config?: Record<string, any>;
+  notify_email?: boolean;
+  email_recipients?: string[];
 }
 
 interface ScanStartResponse {
@@ -28,8 +32,8 @@ interface DashboardStatsResponse {
   total_vulnerabilities: number;
   critical_findings: number;
   high_findings: number;
-  medium_findings: number; // <--- NEW
-  low_findings: number;    // <--- NEW
+  medium_findings: number;
+  low_findings: number;
   asset_criticality_score: number;
   open_ports_detected: number;
   unified_cyber_score: number;
@@ -47,6 +51,16 @@ export interface RemediationStep {
   asset: string;
   action: string;
   source: string;
+}
+
+export interface Notification {
+  id: string;
+  title: string;
+  message: string;
+  type: "info" | "success" | "error";
+  is_read: boolean;
+  timestamp: string;
+  job_id?: string;
 }
 
 interface ThreatIntelSummaryResponse {
@@ -126,7 +140,7 @@ interface ChatMessageResponse {
 // Helper function for API calls
 async function apiCall<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
-  
+
   const config: RequestInit = {
     headers: {
       'Content-Type': 'application/json',
@@ -137,17 +151,30 @@ async function apiCall<T>(endpoint: string, options: RequestInit = {}): Promise<
 
   try {
     const response = await fetch(url, config);
-    
+
     if (!response.ok) {
       throw new Error(`API call failed: ${response.status} ${response.statusText}`);
     }
-    
+
     return await response.json();
   } catch (error) {
     console.error(`API call to ${url} failed:`, error);
     throw error;
   }
 }
+
+// Helper to serialize filters
+const serializeFilters = (params: URLSearchParams, filters?: Record<string, any>) => {
+  if (!filters) return;
+  Object.keys(filters).forEach(key => {
+    const value = filters[key];
+    if (Array.isArray(value)) {
+      value.forEach(v => params.append(key, v));
+    } else if (value !== undefined && value !== null && value !== "") {
+      params.append(key, value);
+    }
+  });
+};
 
 // Scan APIs
 export const startScan = async (request: ScanStartRequest): Promise<ScanStartResponse> => {
@@ -158,7 +185,7 @@ export const startScan = async (request: ScanStartRequest): Promise<ScanStartRes
 };
 
 export const getScanStatus = async (jobId: string): Promise<ScanStatusResponse> => {
-  return apiCall<ScanStatusResponse>(`/scan/status/${jobId}`);
+  return apiCall<ScanStatusResponse>(`/scan/status/${jobId}?include_results=false`);
 };
 
 export const getScanGraph = async (jobId: string): Promise<any> => {
@@ -170,8 +197,13 @@ export const getScanReport = async (jobId: string): Promise<Blob> => {
   return response.blob();
 };
 
-export const getAuditLogs = async (limit: number = 50): Promise<any[]> => {
-  return apiCall<any[]>(`/scan/logs?limit=${limit}`);
+export const getAuditLogs = async (
+  limit: number = 50,
+  search?: string
+): Promise<any[]> => {
+  const params = new URLSearchParams({ limit: limit.toString() });
+  if (search) params.append("search", search);
+  return apiCall<any[]>(`/scan/logs?${params.toString()}`);
 };
 
 // Dashboard APIs
@@ -180,13 +212,34 @@ export const getDashboardStats = async (): Promise<DashboardStatsResponse> => {
 };
 
 // Asset APIs
-export const getAssets = async (skip: number = 0, limit: number = 100): Promise<AssetResponse[]> => {
-  return apiCall<AssetResponse[]>(`/assets?skip=${skip}&limit=${limit}`);
+export const getAssets = async (
+  skip: number = 0, 
+  limit: number = 100,
+  filters?: Record<string, string[]>
+): Promise<AssetResponse[]> => {
+  const params = new URLSearchParams();
+  params.append("skip", skip.toString());
+  params.append("limit", limit.toString());
+
+  if (filters) {
+    if (filters.risk?.length) filters.risk.forEach(v => params.append("risk", v));
+    if (filters.exposure?.length) filters.exposure.forEach(v => params.append("exposure", v));
+    if (filters.os?.length) filters.os.forEach(v => params.append("os", v));
+    if (filters.cloud?.length) filters.cloud.forEach(v => params.append("cloud", v));
+  }
+
+  return apiCall<AssetResponse[]>(`/assets?${params.toString()}`);
 };
 
 // Vulnerability APIs
-export const getVulnerabilities = async (skip: number = 0, limit: number = 100): Promise<VulnerabilityResponse[]> => {
-  return apiCall<VulnerabilityResponse[]>(`/vulnerabilities?skip=${skip}&limit=${limit}`);
+export const getVulnerabilities = async (
+  skip: number = 0, 
+  limit: number = 100,
+  filters?: { severity?: string[]; tool?: string[]; search?: string }
+): Promise<VulnerabilityResponse[]> => {
+  const params = new URLSearchParams({ skip: skip.toString(), limit: limit.toString() });
+  serializeFilters(params, filters);
+  return apiCall<VulnerabilityResponse[]>(`/vulnerabilities?${params.toString()}`);
 };
 
 // Job History APIs
@@ -195,8 +248,14 @@ export const getJobHistory = async (skip: number = 0, limit: number = 100): Prom
 };
 
 // Report APIs
-export const getReports = async (skip: number = 0, limit: number = 100): Promise<ReportResponse[]> => {
-  return apiCall<ReportResponse[]>(`/reports?skip=${skip}&limit=${limit}`);
+export const getReports = async (
+  skip: number = 0, 
+  limit: number = 100,
+  filters?: { status?: string[]; search?: string }
+): Promise<ReportResponse[]> => {
+  const params = new URLSearchParams({ skip: skip.toString(), limit: limit.toString() });
+  serializeFilters(params, filters);
+  return apiCall<ReportResponse[]>(`/reports?${params.toString()}`);
 };
 
 // Chat Assistant APIs
@@ -209,23 +268,24 @@ export const sendChatMessage = async (message: string): Promise<string> => {
   return response.response;
 };
 
-// Stream chat response (returns an async generator)
 export async function* streamChatResponse(
   message: string, 
-  history: { role: "user" | "assistant"; content: string }[] = [] // <--- Added param
+  history: { role: "user" | "assistant"; content: string }[] = []
 ): AsyncGenerator<string, void, unknown> {
   
   const url = `${API_BASE_URL}/chat/stream`;
+  console.log("🚀 Starting Stream Request to:", url); // DEBUG LOG
+
   const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    // Pass history in body
-    body: JSON.stringify({ message, history }), 
+    body: JSON.stringify({ message, history }),
   });
 
   if (!response.ok) {
+    console.error("❌ Stream Request Failed:", response.status);
     throw new Error(`API call failed: ${response.status} ${response.statusText}`);
   }
   
@@ -237,10 +297,16 @@ export async function* streamChatResponse(
   try {
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        console.log("✅ Stream Complete");
+        break;
+      }
       const chunk = decoder.decode(value, { stream: true });
+      console.log("📦 Chunk Received:", chunk); // DEBUG LOG
       yield chunk;
     }
+  } catch (err) {
+    console.error("🔥 Stream Error:", err);
   } finally {
     reader.releaseLock();
   }
@@ -250,8 +316,14 @@ export const getThreatIntelSummary = async (): Promise<ThreatIntelSummaryRespons
   return apiCall<ThreatIntelSummaryResponse>("/threat-intel/summary", "GET");
 };
 
-export const getThreatIntelFeed = async (skip: number = 0, limit: number = 50): Promise<VulnerabilityMetadata[]> => {
-  return apiCall<VulnerabilityMetadata[]>(`/threat-intel/feed?skip=${skip}&limit=${limit}`, "GET");
+export const getThreatIntelFeed = async (
+  skip: number = 0, 
+  limit: number = 50,
+  filters?: { severity?: string[]; exploit_status?: string; search?: string }
+): Promise<VulnerabilityMetadata[]> => {
+  const params = new URLSearchParams({ skip: skip.toString(), limit: limit.toString() });
+  serializeFilters(params, filters);
+  return apiCall<VulnerabilityMetadata[]>(`/threat-intel/feed?${params.toString()}`, "GET");
 };
 
 export const getReportStats = async (): Promise<ReportStatsResponse> => {
@@ -260,4 +332,13 @@ export const getReportStats = async (): Promise<ReportStatsResponse> => {
 
 export const getRemediationPlan = async (jobId: string): Promise<RemediationStep[]> => {
   return apiCall<RemediationStep[]>(`/remediation/${jobId}`);
+};
+
+// Notifications
+export const getNotifications = async (): Promise<Notification[]> => {
+  return apiCall<Notification[]>('/notifications');
+};
+
+export const markNotificationRead = async (id: string): Promise<void> => {
+  return Promise.resolve(); // Placeholder, implement if backend supports it
 };

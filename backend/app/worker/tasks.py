@@ -5,13 +5,21 @@ import os
 import json
 import concurrent.futures
 import urllib3
+import asyncio
+import re
 from sqlmodel import Session
 from app.worker.celery_app import celery_app
 from app.database import engine
-from app.models import Job, JobStatus
+from app.models import Job, JobStatus, Notification
 from typing import List, Dict, Any, Optional
 from app.parsers import parse_nmap, parse_nuclei, parse_nikto, parse_zap, parse_wappalyzer, parse_metasploit, parse_openvas
 from app.enrichment import get_cisa_kev_data, enrich_vulnerability
+from app.utils.nvd_sync import sync_nvd
+from app.utils.exploitdb import sync_exploitdb
+from app.utils.cisa_sync import sync_cisa_kev
+from app.utils.mailer import send_scan_email 
+from app.reporting import generate_pdf_report
+from app.graph import generate_graph_image
 
 # Disable self-signed cert warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -33,7 +41,7 @@ def update_tool_status(job_id: uuid.UUID, tool_name: str, status: str):
             session.add(job)
             session.commit()
 
-# --- SCANNERS ---
+# ... [KEEP Nmap, Nuclei, Nikto, Zap, Wappalyzer, Metasploit functions AS IS] ...
 
 def run_nmap(target: str, host_dir: str, internal_dir: str, config: Dict[str, Any]) -> Optional[str]:
     print(f"Starting Nmap for {target}...")
@@ -52,14 +60,11 @@ def run_nmap(target: str, host_dir: str, internal_dir: str, config: Dict[str, An
         "-oX", "/output/nmap.xml"
     ]
     
-    # --- FIX: Handle 'top-100' logic properly ---
     if ports:
         if str(ports).startswith("top-"):
-             # Convert "top-100" -> ["--top-ports", "100"]
             cmd.extend(["--top-ports", ports.split("-")[1]])
         else:
             cmd.extend(["-p", ports])
-    # ---------------------------------------------
 
     if script: cmd.extend(["--script", script])
     if raw_args: cmd.extend(raw_args)
@@ -125,7 +130,6 @@ def run_nikto(target: str, host_dir: str, internal_dir: str, config: Dict[str, A
         print("Nikto completed.")
         return output_file
     except subprocess.CalledProcessError:
-        # Nikto often returns non-zero even on success findings, so we check for file
         if os.path.exists(output_file): return output_file
         return None
 
@@ -188,14 +192,17 @@ def run_metasploit(target: str, host_dir: str, internal_dir: str, config: Dict[s
 
 def run_openvas(target: str, host_dir: str, internal_dir: str, config: Dict[str, Any]) -> Optional[str]:
     print(f"Starting OpenVAS for {target}...")
-    output_file = os.path.join(internal_dir, "openvas.xml")
+    
+    # Files
+    final_output_file = os.path.join(internal_dir, "openvas.xml")
+    container_output_filename = "openvas_results.xml"
+    celery_output_path = os.path.join(internal_dir, container_output_filename)
     script_filename = "openvas_scan.gmp.py"
     
     profile = config.get("profile", "Full and fast")
     config_id = "daba56c8-73ec-11df-a475-002264764cea"
     if profile == "Discovery": config_id = "8715c877-47a0-471c-8f13-5266c9931727"
     
-    # --- FIX: Robust GMP Script that checks if reports exist ---
     gmp_script = f"""
 import sys
 import time
@@ -232,13 +239,10 @@ try:
         while True:
             response = gmp.get_task(task_id)
             status_list = response.xpath('task/status/text()')
-            
             if not status_list:
                 print("Error: Failed to get status", file=sys.stderr)
                 break
-                
             status = status_list[0]
-            
             if status == 'Done': break
             if status in ['Stopped', 'Interrupted', 'New']: 
                 print(f"Scan stopped prematurely: {{status}}", file=sys.stderr)
@@ -250,12 +254,15 @@ try:
         reports = response.xpath('task/last_report/report/@id')
         
         if not reports:
-             print("Error: No report generated. Scanner feeds might still be loading.", file=sys.stderr)
+             print("Error: No report generated.", file=sys.stderr)
              sys.exit(1)
              
         report_id = reports[0]
         response = gmp.get_report(report_id, report_format_id="a994b278-1f62-11e1-96ac-406186ea4fc5")
-        print(etree.tostring(response, encoding='unicode'))
+        
+        # --- KEY CHANGE: WRITE TO FILE DIRECTLY ---
+        with open('/scan/{container_output_filename}', 'w') as f:
+            f.write(etree.tostring(response, encoding='unicode'))
 
 except Exception as e:
     print(f"GMP Script Error: {{e}}", file=sys.stderr)
@@ -265,7 +272,6 @@ except Exception as e:
     with open(script_path, 'w') as f: f.write(gmp_script)
     os.chmod(script_path, 0o644)
 
-    # --- FIX: Removed --network logic, relying on socket volume ---
     cmd = [
         "docker", "run", "--rm", "--user", "1001",
         "-v", "greenbone-community-edition_gvmd_socket_vol:/run/gvmd",
@@ -278,28 +284,21 @@ except Exception as e:
     try:
         result = subprocess.run(cmd, check=False, capture_output=True, text=True)
         
-        if result.returncode != 0: 
-            print(f"OpenVAS Failed! Exit Code: {result.returncode}")
+        # Check if the file was created in the shared volume
+        if os.path.exists(celery_output_path):
+            os.rename(celery_output_path, final_output_file)
+            print("OpenVAS scan complete. Report retrieved successfully.")
+            return final_output_file
+        else:
+            print("OpenVAS Failed: No output file found.")
             print(f"STDERR: {result.stderr}")
             return None
-        
-        xml_content = result.stdout
-        xml_start = xml_content.find('<report')
-        if xml_start != -1:
-             final_xml = xml_content[xml_start:]
-             xml_end = final_xml.rfind('</report>') + 9
-             final_xml = final_xml[:xml_end]
-             with open(output_file, 'w') as f: f.write(final_xml)
-             print("OpenVAS scan complete.")
-             return output_file
-        return None
+
     except Exception as e: 
         print(f"OpenVAS Execution Error: {e}")
         return None
 
-# --- WRAPPER FOR THREADING ---
 def run_scanner_wrapper(scanner_func, job_id, tool_name, *args):
-    """Wrapper to update DB status before and after scan"""
     try:
         update_tool_status(job_id, tool_name, "running")
         result = scanner_func(*args)
@@ -314,8 +313,6 @@ def run_scanner_wrapper(scanner_func, job_id, tool_name, *args):
         update_tool_status(job_id, tool_name, "failed")
         return None
 
-# --- MAIN TASK ---
-
 @celery_app.task(bind=True)
 def run_scan_task(self, job_id: str, scanners: Dict[str, Any]):
     print(f"Task received for job_id: {job_id}. Scanners: {list(scanners.keys())}")
@@ -325,7 +322,6 @@ def run_scan_task(self, job_id: str, scanners: Dict[str, Any]):
         job = session.get(Job, job_uuid)
         if not job: return
         
-        # Initialize tool status
         initial_status = {name: "pending" for name in scanners.keys()}
         job.tool_status = initial_status
         job.status = JobStatus.RUNNING
@@ -350,7 +346,6 @@ def run_scan_task(self, job_id: str, scanners: Dict[str, Any]):
             "openvas": run_openvas
         }
 
-        print("Launching parallel scans...")
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
             future_to_scanner = {}
             for name, config in scanners.items():
@@ -366,11 +361,9 @@ def run_scan_task(self, job_id: str, scanners: Dict[str, Any]):
                 except Exception as e: 
                     print(f"Scanner {name} exception: {e}")
 
-        # Check for partial success
         failed_tools = [n for n, s in job.tool_status.items() if s == "failed"]
         all_failed = len(failed_tools) == len(scanners)
         
-        print("Starting normalization...")
         if "nmap" in output_paths:
             res = parse_nmap(output_paths["nmap"])
             normalized_data["host_info"] = res["host_info"]
@@ -382,7 +375,6 @@ def run_scan_task(self, job_id: str, scanners: Dict[str, Any]):
         if "metasploit" in output_paths: vulnerabilities.extend(parse_metasploit(output_paths["metasploit"]))
         if "openvas" in output_paths: vulnerabilities.extend(parse_openvas(output_paths["openvas"]))
 
-        print("Enriching data...")
         cisa_cache = get_cisa_kev_data()
         enriched_vulns = [enrich_vulnerability(v, cisa_cache) for v in vulnerabilities]
         normalized_data["vulnerabilities"] = enriched_vulns
@@ -393,5 +385,59 @@ def run_scan_task(self, job_id: str, scanners: Dict[str, Any]):
         
         session.add(job)
         session.commit()
+        session.refresh(job)
+        
+        # --- NOTIFICATIONS & EMAILS ---
+        try:
+            notif = Notification(
+                title=f"Scan Finished: {job.target}",
+                message=f"Scan completed with status: {job.status}. Found {len(vulnerabilities)} issues.",
+                type="success" if job.status == JobStatus.COMPLETED else "error",
+                job_id=job.id
+            )
+            session.add(notif)
+            session.commit()
+
+            if job.notify_email and job.email_recipients:
+                print(f"Sending email to: {job.email_recipients}")
+                
+                pdf_path = os.path.join(internal_dir, f"report_{job_id}.pdf")
+                generate_pdf_report({
+                    "job_id": str(job.id), "target": job.target, "created_at": job.created_at, "results": normalized_data
+                }, pdf_path)
+
+                graph_path = os.path.join(internal_dir, f"graph_{job_id}.png")
+                try:
+                    generate_graph_image(str(job.id), graph_path)
+                except Exception as e: 
+                    print(f"Graph Gen Error: {e}")
+                    graph_path = None
+
+                attachments = [pdf_path]
+                if graph_path and os.path.exists(graph_path):
+                    attachments.append(graph_path)
+
+                asyncio.run(send_scan_email(
+                    recipients=job.email_recipients,
+                    subject=f"CyberRakshak Scan Report: {job.target}",
+                    body=f"Scan completed. Found {len(vulnerabilities)} vulnerabilities.\n\nSee attached report.",
+                    attachments=attachments
+                ))
+        except Exception as e:
+            print(f"Notification Error: {e}")
         
         return {"status": job.status, "files": output_paths}
+
+@celery_app.task
+def sync_threat_intel_task():
+    print("--- Starting Scheduled NVD Sync ---")
+    sync_nvd(days_back=2)
+    print("--- Scheduled NVD Sync Completed ---")
+
+@celery_app.task
+def sync_exploitdb_task():
+    sync_exploitdb()
+
+@celery_app.task
+def sync_cisa_task():
+    sync_cisa_kev()

@@ -13,6 +13,7 @@ import Remediation from "../pages/Remediation";
 import ChatAssistant from "../pages/ChatAssistant";
 import Settings from "../pages/Settings";
 import UserProfile from "../pages/UserProfile";
+import GraphSnapshot from "../pages/GraphSnapshot";
 
 export const AppRouter = () => {
   return (
@@ -32,6 +33,7 @@ export const AppRouter = () => {
           <Route path="/settings" element={<Settings />} />
           <Route path="/profile" element={<UserProfile />} />
         </Route>
+	<Route path="/graph-snapshot/:jobId" element={<GraphSnapshot />} />
       </Routes>
     </BrowserRouter>
   );
