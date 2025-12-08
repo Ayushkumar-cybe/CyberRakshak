@@ -41,7 +41,7 @@ services:
       DATABASE_URL: "postgresql://postgres:mysecretpassword@postgres:5432/sih_db"
       RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672//"
       REDIS_URL: "redis://redis:6379"
-      AI_SERVER_URL: "http://10.0.0.249:5000/generate"
+      AI_SERVER_URL: "http://10.0.0.51:8080/api/chat"
     volumes:
       - .:/app
     depends_on:

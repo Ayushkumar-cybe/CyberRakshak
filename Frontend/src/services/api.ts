@@ -268,13 +268,14 @@ export const sendChatMessage = async (message: string): Promise<string> => {
   return response.response;
 };
 
-// Stream chat response
 export async function* streamChatResponse(
   message: string, 
   history: { role: "user" | "assistant"; content: string }[] = []
 ): AsyncGenerator<string, void, unknown> {
   
   const url = `${API_BASE_URL}/chat/stream`;
+  console.log("🚀 Starting Stream Request to:", url); // DEBUG LOG
+
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -284,6 +285,7 @@ export async function* streamChatResponse(
   });
 
   if (!response.ok) {
+    console.error("❌ Stream Request Failed:", response.status);
     throw new Error(`API call failed: ${response.status} ${response.statusText}`);
   }
   
@@ -295,10 +297,16 @@ export async function* streamChatResponse(
   try {
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        console.log("✅ Stream Complete");
+        break;
+      }
       const chunk = decoder.decode(value, { stream: true });
+      console.log("📦 Chunk Received:", chunk); // DEBUG LOG
       yield chunk;
     }
+  } catch (err) {
+    console.error("🔥 Stream Error:", err);
   } finally {
     reader.releaseLock();
   }

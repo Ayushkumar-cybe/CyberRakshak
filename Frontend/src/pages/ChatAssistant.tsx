@@ -7,7 +7,7 @@ import chatAssistantService from "../services/chatAssistant";
 interface Message {
   id: number;
   sender: "user" | "ai";
-  content: string;
+  content: string; // This will hold the text or "Thinking..."
   timestamp: Date;
 }
 
@@ -21,7 +21,6 @@ const ChatAssistant = () => {
     }
   ]);
   const [inputValue, setInputValue] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Capability cards data
@@ -53,64 +52,61 @@ const ChatAssistant = () => {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, isTyping]);
+  }, [messages]);
 
   // Unified send function for both Input and Capabilities
   const processMessage = async (text: string) => {
     if (!text.trim()) return;
 
-    // 1. Add User Message
+    // 1. Generate IDs immediately
+    const userMsgId = Date.now();
+    const aiMsgId = userMsgId + 1;
+
+    // 2. Create User Message
     const userMsg: Message = {
-      id: Date.now(),
+      id: userMsgId,
       sender: "user",
       content: text,
       timestamp: new Date()
     };
 
-    setMessages(prev => [...prev, userMsg]);
-    setInputValue("");
-    setIsTyping(true);
+    // 3. Create AI Placeholder Message
+    // This acts as the "Typing..." indicator until text arrives
+    const aiPlaceholder: Message = {
+      id: aiMsgId,
+      sender: "ai",
+      content: "Thinking...", 
+      timestamp: new Date()
+    };
 
-    // 2. Prepare History for Context
+    // 4. Update State ONCE with both messages
+    setMessages(prev => [...prev, userMsg, aiPlaceholder]);
+    setInputValue("");
+
+    // 5. Prepare History (Snapshotted before this update)
     const history = messages.map(m => ({
       role: m.sender === "ai" ? "assistant" : "user" as "assistant" | "user",
       content: m.content
     }));
 
-    // 3. Call Streaming API
+    // 6. Call Streaming API
     try {
-      let isFirstChunk = true;
-      const aiMsgId = Date.now() + 1;
-
       await chatAssistantService.sendStreamingMessage(text, history, (fullText) => {
-        setMessages(prev => {
-          // If it's the first chunk, append the new AI message
-          if (isFirstChunk) {
-            setIsTyping(false);
-            isFirstChunk = false;
-            return [...prev, {
-              id: aiMsgId,
-              sender: "ai",
-              content: fullText,
-              timestamp: new Date()
-            }];
-          }
-          
-          // Otherwise, update the existing AI message
-          return prev.map(msg => 
+        // ONLY update the existing placeholder message.
+        setMessages(prev => 
+          prev.map(msg => 
             msg.id === aiMsgId ? { ...msg, content: fullText } : msg
-          );
-        });
+          )
+        );
       });
     } catch (error) {
       console.error("Chat error:", error);
-      setIsTyping(false);
-      setMessages(prev => [...prev, {
-        id: Date.now(),
-        sender: "ai",
-        content: "I'm having trouble connecting to the server. Please try again later.",
-        timestamp: new Date()
-      }]);
+      // Update the placeholder with error text if it fails
+      setMessages(prev => 
+        prev.map(msg => 
+          msg.id === aiMsgId ? { ...msg, content: "I'm having trouble connecting to the server. Please try again later." } : msg
+        )
+      );
     }
   };
 
@@ -189,25 +185,6 @@ const ChatAssistant = () => {
                 )}
               </div>
             ))}
-            
-            {/* Typing Indicator */}
-            {isTyping && (
-              <div className="flex justify-start">
-                <div className="bg-white dark:bg-[#1e293b] border border-slate-200 dark:border-slate-700 rounded-2xl rounded-tl-sm px-6 py-6 shadow-sm w-full max-w-[80%]">
-                  <div className="flex items-start mb-3">
-                    <div className="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center mr-3 flex-shrink-0">
-                      <Bot className="w-4 h-4 text-cyan-500" />
-                    </div>
-                    <span className="font-semibold text-slate-800 dark:text-slate-100">CyRa AI</span>
-                  </div>
-                  <div className="flex space-x-1">
-                    <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
-                    <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }}></div>
-                    <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "0.4s" }}></div>
-                  </div>
-                </div>
-              </div>
-            )}
             
             <div ref={messagesEndRef} />
           </div>

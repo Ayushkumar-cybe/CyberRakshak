@@ -32,3 +32,4 @@ python-multipart
 fastapi-mail
 matplotlib
 scipy
+httpx
