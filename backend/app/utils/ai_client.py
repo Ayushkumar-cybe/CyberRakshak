@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 
 # This points to your separate AI Server (Instance B)
 # Default to localhost for dev, but in prod (docker-compose) this will be the private IP
-AI_SERVER_URL = os.getenv("AI_SERVER_URL", "http://10.0.0.249:5000/generate")
+AI_SERVER_URL = os.getenv("AI_SERVER_URL", "http://10.0.0.51:8080/api/chat")
 
 def generate_ai_response(prompt: str) -> str:
     """

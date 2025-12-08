@@ -1,8 +1,18 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Bot, Send, Zap, Shield, FileText, User, Radar, Brain } from "lucide-react";
+import { Bot, Send, Zap, Radar, Brain } from "lucide-react";
+// Import the service
+import chatAssistantService from "../services/chatAssistant";
+
+// Define message type for clarity
+interface Message {
+  id: number;
+  sender: "user" | "ai";
+  content: string;
+  timestamp: Date;
+}
 
 const ChatAssistant = () => {
-  const [messages, setMessages] = useState([
+  const [messages, setMessages] = useState<Message[]>([
     {
       id: 1,
       sender: "ai",
@@ -43,67 +53,72 @@ const ChatAssistant = () => {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, isTyping]);
 
-  // Handle sending a message
-  const handleSendMessage = () => {
-    if (inputValue.trim() === "") return;
+  // Unified send function for both Input and Capabilities
+  const processMessage = async (text: string) => {
+    if (!text.trim()) return;
 
-    // Add user message
-    const newUserMessage = {
-      id: messages.length + 1,
+    // 1. Add User Message
+    const userMsg: Message = {
+      id: Date.now(),
       sender: "user",
-      content: inputValue,
+      content: text,
       timestamp: new Date()
     };
 
-    setMessages(prev => [...prev, newUserMessage]);
+    setMessages(prev => [...prev, userMsg]);
     setInputValue("");
     setIsTyping(true);
 
-    // Simulate AI response after delay
-    setTimeout(() => {
-      const aiResponse = {
-        id: messages.length + 2,
-        sender: "ai",
-        content: "I've analyzed your request and found several potential vulnerabilities. Would you like me to generate a detailed report or prioritize remediation steps?",
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, aiResponse]);
+    // 2. Prepare History for Context
+    const history = messages.map(m => ({
+      role: m.sender === "ai" ? "assistant" : "user" as "assistant" | "user",
+      content: m.content
+    }));
+
+    // 3. Call Streaming API
+    try {
+      let isFirstChunk = true;
+      const aiMsgId = Date.now() + 1;
+
+      await chatAssistantService.sendStreamingMessage(text, history, (fullText) => {
+        setMessages(prev => {
+          // If it's the first chunk, append the new AI message
+          if (isFirstChunk) {
+            setIsTyping(false);
+            isFirstChunk = false;
+            return [...prev, {
+              id: aiMsgId,
+              sender: "ai",
+              content: fullText,
+              timestamp: new Date()
+            }];
+          }
+          
+          // Otherwise, update the existing AI message
+          return prev.map(msg => 
+            msg.id === aiMsgId ? { ...msg, content: fullText } : msg
+          );
+        });
+      });
+    } catch (error) {
+      console.error("Chat error:", error);
       setIsTyping(false);
-    }, 1500);
-  };
-
-  // Handle capability click
-  const handleCapabilityClick = (capability: any) => {
-    const newUserMessage = {
-      id: messages.length + 1,
-      sender: "user",
-      content: capability.title,
-      timestamp: new Date()
-    };
-
-    setMessages(prev => [...prev, newUserMessage]);
-    setIsTyping(true);
-
-    // Simulate AI response after delay
-    setTimeout(() => {
-      const aiResponse = {
-        id: messages.length + 2,
+      setMessages(prev => [...prev, {
+        id: Date.now(),
         sender: "ai",
-        content: `I'm initiating ${capability.title.toLowerCase()}. This may take a moment while I scan your systems and correlate threat intelligence.`,
+        content: "I'm having trouble connecting to the server. Please try again later.",
         timestamp: new Date()
-      };
-      setMessages(prev => [...prev, aiResponse]);
-      setIsTyping(false);
-    }, 1500);
+      }]);
+    }
   };
 
   // Handle Enter key press
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSendMessage();
+      processMessage(inputValue);
     }
   };
 
@@ -134,7 +149,7 @@ const ChatAssistant = () => {
                 <div 
                   key={capability.id}
                   className="bg-white dark:bg-[#1e293b] border border-slate-200 dark:border-white/10 hover:border-cyan-500 shadow-sm hover:shadow-xl transition-all p-8 flex flex-col items-center gap-4 cursor-pointer rounded-xl"
-                  onClick={() => handleCapabilityClick(capability)}
+                  onClick={() => processMessage(capability.title)}
                 >
                   <div className="p-3 rounded-full bg-slate-100 dark:bg-slate-700">
                     {capability.icon}
@@ -166,7 +181,10 @@ const ChatAssistant = () => {
                       </div>
                       <span className="font-semibold text-slate-800 dark:text-slate-100">CyRa AI</span>
                     </div>
-                    <p className="text-slate-800 dark:text-slate-100">{message.content}</p>
+                    {/* Render newlines properly */}
+                    <div className="text-slate-800 dark:text-slate-100 whitespace-pre-wrap leading-relaxed">
+                      {message.content}
+                    </div>
                   </div>
                 )}
               </div>
@@ -204,15 +222,15 @@ const ChatAssistant = () => {
             onChange={(e) => setInputValue(e.target.value)}
             onKeyPress={handleKeyPress}
             placeholder="Message CyRa AI..."
-            className="flex-1 bg-transparent border-0 focus:ring-0 text-slate-800 dark:text-slate-100 placeholder-slate-500 dark:placeholder-slate-400 text-lg px-6 py-4 resize-none max-h-32"
+            className="flex-1 bg-transparent border-0 focus:ring-0 text-slate-800 dark:text-slate-100 placeholder-slate-500 dark:placeholder-slate-400 text-lg px-6 py-4 resize-none max-h-32 focus:outline-none"
             rows={1}
           />
           <button
-            onClick={handleSendMessage}
+            onClick={() => processMessage(inputValue)}
             disabled={inputValue.trim() === ""}
-            className="w-12 h-12 rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 disabled:opacity-50 flex items-center justify-center transition-all shadow-lg"
+            className="w-12 h-12 rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 disabled:opacity-50 flex items-center justify-center transition-all shadow-lg text-white"
           >
-            <Send className="w-5 h-5 text-white" />
+            <Send className="w-5 h-5" />
           </button>
         </div>
       </div>

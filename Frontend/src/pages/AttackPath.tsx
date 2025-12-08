@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import AttackGraph from "../components/attack/AttackGraph";
-import { Search, Download, RefreshCw, AlertCircle } from "lucide-react";
+import AttackNodeDrawer from "../components/attack/AttackNodeDrawer"; // Import the Drawer
+import { Search, RefreshCw, AlertCircle } from "lucide-react";
 import { getJobHistory, getScanGraph } from "../services/api";
 
 const AttackPath = () => {
@@ -13,6 +14,10 @@ const AttackPath = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [severityFilter, setSeverityFilter] = useState("All");
+
+  // Drawer State (Lifted Up)
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [selectedNode, setSelectedNode] = useState<any>(null);
 
   // 1. Load Latest Job if none provided
   useEffect(() => {
@@ -27,7 +32,6 @@ const AttackPath = () => {
         const latestCompleted = jobs.find(j => j.status === "completed" || j.status === "partial_success");
         if (latestCompleted) {
           setJobId(latestCompleted.job_id);
-          // Update URL without reload
           setSearchParams({ job_id: latestCompleted.job_id });
           loadGraph(latestCompleted.job_id);
         } else {
@@ -56,7 +60,13 @@ const AttackPath = () => {
     }
   };
 
-  // 3. Transform Graph Edges into Table Rows
+  // 3. Handle Node Selection (From Graph or Table)
+  const handleNodeSelect = (node: any) => {
+    setSelectedNode(node);
+    setDrawerOpen(true);
+  };
+
+  // 4. Transform Graph Edges into Table Rows
   const getTableData = () => {
     if (!graphData.edges || !graphData.nodes) return [];
 
@@ -75,8 +85,10 @@ const AttackPath = () => {
 
       return {
         id: edge.id,
-        source: sourceNode?.data?.label || edge.source,
-        target: targetNode?.data?.label || edge.target,
+        sourceLabel: sourceNode?.data?.label || edge.source,
+        targetLabel: targetNode?.data?.label || edge.target,
+        sourceNode: sourceNode, // Store full object for click handler
+        targetNode: targetNode, // Store full object for click handler
         type: targetNode?.type === "output" ? "Exploit Vulnerability" : "Network Connection",
         severity,
         probability: targetNode?.type === "output" ? "High" : "Medium"
@@ -86,13 +98,12 @@ const AttackPath = () => {
 
   const tableData = getTableData().filter(row => {
     const matchesSearch = 
-      row.source.toLowerCase().includes(searchTerm.toLowerCase()) || 
-      row.target.toLowerCase().includes(searchTerm.toLowerCase());
+      row.sourceLabel.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      row.targetLabel.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesSeverity = severityFilter === "All" || row.severity === severityFilter;
     return matchesSearch && matchesSeverity;
   });
 
-  // Helper for badges
   const getSeverityBadge = (severity: string) => {
     switch (severity) {
       case "Critical": return "bg-red-500/20 text-red-600 dark:text-red-400";
@@ -107,27 +118,25 @@ const AttackPath = () => {
       
       {/* HEADER METRICS */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        {/* ... Metrics ... */}
         <div className="bg-white dark:bg-[#111625]/90 border border-slate-200 dark:border-white/10 rounded-lg p-4">
           <div className="text-2xl font-bold text-red-600 dark:text-red-500">
             {tableData.filter(r => r.severity === "Critical").length}
           </div>
           <div className="text-xs uppercase text-slate-500 dark:text-slate-400 mt-1">Critical Attack Paths</div>
         </div>
-
         <div className="bg-white dark:bg-[#111625]/90 border border-slate-200 dark:border-white/10 rounded-lg p-4">
           <div className="text-2xl font-bold text-purple-600 dark:text-purple-500">
             {graphData.nodes.length > 0 ? graphData.nodes[0]?.data?.label : "N/A"}
           </div>
           <div className="text-xs uppercase text-slate-500 dark:text-slate-400 mt-1">Entry Point</div>
         </div>
-
         <div className="bg-white dark:bg-[#111625]/90 border border-slate-200 dark:border-white/10 rounded-lg p-4">
           <div className="text-2xl font-bold text-orange-600 dark:text-orange-500">
             {graphData.nodes.length}
           </div>
           <div className="text-xs uppercase text-slate-500 dark:text-slate-400 mt-1">Total Nodes Mapped</div>
         </div>
-
         <div className="bg-white dark:bg-[#111625]/90 border border-slate-200 dark:border-white/10 rounded-lg p-4">
           <div className="text-2xl font-bold text-blue-600 dark:text-blue-500">
             {tableData.length}
@@ -139,8 +148,8 @@ const AttackPath = () => {
       {/* GRAPH VISUALIZATION */}
       <div className="h-[600px] w-full bg-slate-100 dark:bg-black/40 border border-slate-200 dark:border-white/5 rounded-xl relative overflow-hidden mb-6">
         <div className="w-full h-full">
-          {/* We pass the jobId to the Graph component which handles its own specific rendering logic */}
-          <AttackGraph initialJobId={jobId} />
+          {/* PASS THE HANDLER HERE */}
+          <AttackGraph initialJobId={jobId} onNodeClick={handleNodeSelect} />
         </div>
         
         {!jobId && !loading && (
@@ -220,9 +229,17 @@ const AttackPath = () => {
               ) : (
                 tableData.map((row) => (
                   <tr key={row.id} className="border-b border-slate-200 dark:border-white/5 hover:bg-slate-50 dark:hover:bg-white/5 transition">
-                    <td className="p-3 font-mono text-slate-700 dark:text-slate-300">{row.source}</td>
-                    <td className="p-3 font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                      {row.target}
+                    <td 
+                      className="p-3 font-mono text-blue-600 dark:text-blue-400 cursor-pointer hover:underline"
+                      onClick={() => row.sourceNode && handleNodeSelect(row.sourceNode)}
+                    >
+                      {row.sourceLabel}
+                    </td>
+                    <td 
+                      className="p-3 font-bold text-blue-600 dark:text-blue-400 cursor-pointer hover:underline flex items-center gap-2"
+                      onClick={() => row.targetNode && handleNodeSelect(row.targetNode)}
+                    >
+                      {row.targetLabel}
                     </td>
                     <td className="p-3 text-slate-600 dark:text-slate-400 italic">{row.type}</td>
                     <td className="p-3 text-slate-900 dark:text-white">{row.probability}</td>
@@ -238,6 +255,13 @@ const AttackPath = () => {
           </table>
         </div>
       </div>
+
+      {/* DRAWER COMPONENT */}
+      <AttackNodeDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        node={selectedNode}
+      />
     </div>
   );
 };

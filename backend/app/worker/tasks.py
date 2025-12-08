@@ -6,6 +6,7 @@ import json
 import concurrent.futures
 import urllib3
 import asyncio
+import re
 from sqlmodel import Session
 from app.worker.celery_app import celery_app
 from app.database import engine
@@ -16,10 +17,7 @@ from app.enrichment import get_cisa_kev_data, enrich_vulnerability
 from app.utils.nvd_sync import sync_nvd
 from app.utils.exploitdb import sync_exploitdb
 from app.utils.cisa_sync import sync_cisa_kev
-
-# --- FIX: Updated Import ---
 from app.utils.mailer import send_scan_email 
-
 from app.reporting import generate_pdf_report
 from app.graph import generate_graph_image
 
@@ -43,8 +41,7 @@ def update_tool_status(job_id: uuid.UUID, tool_name: str, status: str):
             session.add(job)
             session.commit()
 
-# ... [KEEP ALL SCANNER FUNCTIONS: run_nmap, run_nuclei, etc.] ...
-# ... [No changes needed to scanner functions themselves] ...
+# ... [KEEP Nmap, Nuclei, Nikto, Zap, Wappalyzer, Metasploit functions AS IS] ...
 
 def run_nmap(target: str, host_dir: str, internal_dir: str, config: Dict[str, Any]) -> Optional[str]:
     print(f"Starting Nmap for {target}...")
@@ -195,7 +192,11 @@ def run_metasploit(target: str, host_dir: str, internal_dir: str, config: Dict[s
 
 def run_openvas(target: str, host_dir: str, internal_dir: str, config: Dict[str, Any]) -> Optional[str]:
     print(f"Starting OpenVAS for {target}...")
-    output_file = os.path.join(internal_dir, "openvas.xml")
+    
+    # Files
+    final_output_file = os.path.join(internal_dir, "openvas.xml")
+    container_output_filename = "openvas_results.xml"
+    celery_output_path = os.path.join(internal_dir, container_output_filename)
     script_filename = "openvas_scan.gmp.py"
     
     profile = config.get("profile", "Full and fast")
@@ -238,13 +239,10 @@ try:
         while True:
             response = gmp.get_task(task_id)
             status_list = response.xpath('task/status/text()')
-            
             if not status_list:
                 print("Error: Failed to get status", file=sys.stderr)
                 break
-                
             status = status_list[0]
-            
             if status == 'Done': break
             if status in ['Stopped', 'Interrupted', 'New']: 
                 print(f"Scan stopped prematurely: {{status}}", file=sys.stderr)
@@ -256,12 +254,15 @@ try:
         reports = response.xpath('task/last_report/report/@id')
         
         if not reports:
-             print("Error: No report generated. Scanner feeds might still be loading.", file=sys.stderr)
+             print("Error: No report generated.", file=sys.stderr)
              sys.exit(1)
              
         report_id = reports[0]
         response = gmp.get_report(report_id, report_format_id="a994b278-1f62-11e1-96ac-406186ea4fc5")
-        print(etree.tostring(response, encoding='unicode'))
+        
+        # --- KEY CHANGE: WRITE TO FILE DIRECTLY ---
+        with open('/scan/{container_output_filename}', 'w') as f:
+            f.write(etree.tostring(response, encoding='unicode'))
 
 except Exception as e:
     print(f"GMP Script Error: {{e}}", file=sys.stderr)
@@ -283,21 +284,16 @@ except Exception as e:
     try:
         result = subprocess.run(cmd, check=False, capture_output=True, text=True)
         
-        if result.returncode != 0: 
-            print(f"OpenVAS Failed! Exit Code: {result.returncode}")
+        # Check if the file was created in the shared volume
+        if os.path.exists(celery_output_path):
+            os.rename(celery_output_path, final_output_file)
+            print("OpenVAS scan complete. Report retrieved successfully.")
+            return final_output_file
+        else:
+            print("OpenVAS Failed: No output file found.")
             print(f"STDERR: {result.stderr}")
             return None
-        
-        xml_content = result.stdout
-        xml_start = xml_content.find('<report')
-        if xml_start != -1:
-             final_xml = xml_content[xml_start:]
-             xml_end = final_xml.rfind('</report>') + 9
-             final_xml = final_xml[:xml_end]
-             with open(output_file, 'w') as f: f.write(final_xml)
-             print("OpenVAS scan complete.")
-             return output_file
-        return None
+
     except Exception as e: 
         print(f"OpenVAS Execution Error: {e}")
         return None
@@ -434,25 +430,14 @@ def run_scan_task(self, job_id: str, scanners: Dict[str, Any]):
 
 @celery_app.task
 def sync_threat_intel_task():
-    """
-    Background task to sync NVD vulnerabilities.
-    Runs automatically via Celery Beat.
-    """
     print("--- Starting Scheduled NVD Sync ---")
-    # Sync last 2 days to ensure we catch everything recent
     sync_nvd(days_back=2)
     print("--- Scheduled NVD Sync Completed ---")
 
 @celery_app.task
 def sync_exploitdb_task():
-    """
-    Background task to sync ExploitDB data.
-    """
     sync_exploitdb()
 
 @celery_app.task
 def sync_cisa_task():
-    """
-    Background task to sync CISA KEV data.
-    """
     sync_cisa_kev()
